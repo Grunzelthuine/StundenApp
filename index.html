@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Stundenzettel</title>
+<link rel="manifest" href="manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Stundenzettel">
+<meta name="theme-color" content="#1d4e89">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<style>
+  :root{
+    --blue:#1d4e89; --blue-dark:#123a68; --bg:#f2f4f7; --card:#ffffff;
+    --text:#1b2430; --muted:#6b7686; --line:#dfe3e9; --green:#2e8b57; --red:#c0392b;
+    --radius:14px;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
+  body{padding-bottom:90px;}
+  header.app{
+    position:sticky; top:0; z-index:10; background:var(--blue); color:#fff;
+    padding:14px 16px calc(14px + env(safe-area-inset-top)) 16px; padding-top:calc(14px + env(safe-area-inset-top));
+    display:flex; align-items:center; justify-content:space-between;
+  }
+  header.app h1{font-size:18px; margin:0; font-weight:700;}
+  header.app .sub{font-size:12px; opacity:.85; margin-top:2px;}
+  main{max-width:640px; margin:0 auto; padding:16px;}
+  .card{background:var(--card); border-radius:var(--radius); padding:16px; margin-bottom:16px;
+    box-shadow:0 1px 3px rgba(0,0,0,.06);}
+  .card h2{font-size:15px; margin:0 0 12px 0; color:var(--blue-dark); text-transform:uppercase; letter-spacing:.04em;}
+  label{display:block; font-size:13px; color:var(--muted); margin:10px 0 4px;}
+  label:first-child{margin-top:0;}
+  input[type=text], input[type=date], input[type=number], input[type=time], textarea, select{
+    width:100%; padding:11px 12px; border:1.5px solid var(--line); border-radius:10px;
+    font-size:16px; background:#fff; color:var(--text); font-family:inherit;
+  }
+  textarea{resize:vertical; min-height:64px;}
+  input:focus, textarea:focus, select:focus{outline:none; border-color:var(--blue);}
+  .row{display:flex; gap:10px;}
+  .row > *{flex:1;}
+  .hint{font-size:12px; color:var(--muted); margin-top:4px;}
+  .mic-field{position:relative;}
+  .mic-field textarea, .mic-field input{padding-right:44px;}
+  .mic-badge{
+    position:absolute; right:8px; top:8px; width:30px; height:30px; border-radius:50%;
+    background:var(--blue); color:#fff; display:flex; align-items:center; justify-content:center;
+    font-size:15px; pointer-events:none;
+  }
+  .date-nav{display:flex; gap:8px; align-items:stretch;}
+  .date-nav input[type=date]{flex:1;}
+  .date-arrow-btn{
+    flex:0 0 44px; border:1.5px solid var(--line); background:#fff; border-radius:10px;
+    font-size:16px; color:var(--blue); cursor:pointer;
+  }
+  .date-arrow-btn:active{background:#eef1f5;}
+  .quickbtns{display:flex; gap:8px; flex-wrap:wrap; margin-top:6px;}
+  .qbtn{
+    border:1.5px solid var(--line); background:#fff; border-radius:20px; padding:7px 14px;
+    font-size:14px; color:var(--text); cursor:pointer;
+  }
+  .qbtn.active{background:var(--blue); border-color:var(--blue); color:#fff;}
+  .segmented{display:flex; border:1.5px solid var(--line); border-radius:10px; overflow:hidden;}
+  .segmented button{flex:1; padding:10px; border:none; background:#fff; font-size:14px; color:var(--text); cursor:pointer;}
+  .segmented button.active{background:var(--blue); color:#fff;}
+  .btn{
+    width:100%; padding:14px; border:none; border-radius:12px; font-size:16px; font-weight:600;
+    cursor:pointer; margin-top:14px;
+  }
+  .btn-primary{background:var(--blue); color:#fff;}
+  .btn-primary:active{background:var(--blue-dark);}
+  .btn-secondary{background:#eef1f5; color:var(--text);}
+  .btn-danger{background:#fdecea; color:var(--red);}
+  .btn-block-row{display:flex; gap:10px;}
+  .btn-block-row .btn{margin-top:0;}
+  datalist{display:none;}
+  .entry-list{list-style:none; margin:0; padding:0;}
+  .entry-group{margin-bottom:14px;}
+  .entry-group-date{font-size:13px; font-weight:700; color:var(--blue-dark); margin:0 0 6px 2px; display:flex; justify-content:space-between;}
+  .entry-group-date span.total{color:var(--muted); font-weight:500;}
+  .entry-item{
+    background:#fafbfc; border:1px solid var(--line); border-radius:10px; padding:10px 12px;
+    margin-bottom:8px; display:flex; justify-content:space-between; align-items:flex-start; gap:10px;
+  }
+  .entry-item .info{flex:1; min-width:0;}
+  .entry-item .customer{font-weight:600; font-size:14.5px;}
+  .entry-item .desc{font-size:13px; color:var(--muted); margin-top:2px; overflow:hidden; text-overflow:ellipsis; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;}
+  .entry-item .meta{font-size:12px; color:var(--muted); margin-top:4px;}
+  .entry-item .actions{display:flex; flex-direction:column; gap:6px; align-items:flex-end;}
+  .icon-btn{background:none; border:none; font-size:16px; padding:4px 6px; cursor:pointer; color:var(--muted);}
+  .icon-btn.del{color:var(--red);}
+  .empty-state{text-align:center; color:var(--muted); font-size:14px; padding:24px 10px;}
+  .toast{
+    position:fixed; left:50%; bottom:22px; transform:translateX(-50%); background:#1b2430; color:#fff;
+    padding:11px 18px; border-radius:24px; font-size:14px; z-index:50; opacity:0; pointer-events:none;
+    transition:opacity .25s; max-width:90%; text-align:center;
+  }
+  .toast.show{opacity:1;}
+  .modal-backdrop{
+    position:fixed; inset:0; background:rgba(0,0,0,.4); z-index:40; display:none;
+    align-items:flex-end; justify-content:center;
+  }
+  .modal-backdrop.show{display:flex;}
+  .modal{background:#fff; width:100%; max-width:640px; border-radius:16px 16px 0 0; padding:18px 16px calc(18px + env(safe-area-inset-bottom));
+    max-height:85vh; overflow-y:auto;}
+  .modal h3{margin:0 0 12px; font-size:16px;}
+  .badge{display:inline-block; font-size:11px; background:#eef1f5; color:var(--muted); border-radius:6px; padding:2px 6px; margin-left:6px;}
+  .footer-note{text-align:center; font-size:11px; color:var(--muted); margin-top:20px; line-height:1.6;}
+  .archive-batch{border:1px solid var(--line); border-radius:10px; margin-bottom:10px; overflow:hidden; background:#fafbfc;}
+  .archive-batch summary{
+    list-style:none; cursor:pointer; padding:12px 14px; font-size:13.5px; font-weight:600; color:var(--blue-dark);
+    display:flex; justify-content:space-between; align-items:center;
+  }
+  .archive-batch summary::-webkit-details-marker{display:none;}
+  .archive-batch summary::after{content:"▾"; color:var(--muted); font-weight:400; margin-left:8px;}
+  .archive-batch[open] summary::after{content:"▴";}
+  .archive-batch-body{padding:0 14px 14px;}
+  .archive-batch .entry-item{background:#fff;}
+</style>
+</head>
+<body>
+
+<header class="app">
+  <div>
+    <h1>Stundenzettel</h1>
+    <div class="sub" id="headerSub">Elektro Speckmann GmbH</div>
+  </div>
+  <button class="icon-btn" style="color:#fff; font-size:22px;" id="settingsBtn" title="Einstellungen">⚙️</button>
+</header>
+
+<main>
+
+  <div class="card">
+    <h2>Neuer Eintrag</h2>
+
+    <label for="f-date">Datum</label>
+    <div class="date-nav">
+      <button type="button" id="datePrevBtn" class="date-arrow-btn" aria-label="Ein Tag zurück">◀</button>
+      <input type="date" id="f-date">
+      <button type="button" id="dateNextBtn" class="date-arrow-btn" aria-label="Ein Tag vor">▶</button>
+    </div>
+    <div class="quickbtns">
+      <button type="button" class="qbtn" data-date-shift="0">Heute</button>
+      <button type="button" class="qbtn" data-date-shift="-1">Gestern</button>
+    </div>
+
+    <label for="f-customer">Kunde</label>
+    <div class="mic-field">
+      <input type="text" id="f-customer" list="customerList" placeholder="z. B. Müller" autocomplete="off">
+      <div class="mic-badge">🎤</div>
+    </div>
+    <datalist id="customerList"></datalist>
+    <div id="newCustomerBox" style="display:none;">
+      <label for="f-customer-address">Adresse (Neukunde) — Straße/Ort, Telefon</label>
+      <div class="mic-field">
+        <textarea id="f-customer-address" rows="2" placeholder="z. B. Hauptstraße 1, 49832 Freren, Tel. 0591 123456"></textarea>
+        <div class="mic-badge">🎤</div>
+      </div>
+    </div>
+
+    <label for="f-desc">Arbeitsbeschreibung</label>
+    <div class="mic-field">
+      <textarea id="f-desc" rows="2" placeholder="Antippen und über die Mikrofon-Taste der Tastatur diktieren …"></textarea>
+      <div class="mic-badge">🎤</div>
+    </div>
+    <div class="hint">Tipp: Auf das Feld tippen, dann die Diktierfunktion der Tastatur (Mikrofon-Taste) verwenden.</div>
+
+    <label>Zeit</label>
+    <div class="segmented" id="timeModeSeg">
+      <button type="button" class="active" data-mode="range">Uhrzeit von–bis</button>
+      <button type="button" data-mode="duration">Stundenzahl</button>
+    </div>
+
+    <div id="rangeFields" class="row" style="margin-top:10px;">
+      <div>
+        <label for="f-start">Von</label>
+        <input type="time" id="f-start" value="07:30">
+      </div>
+      <div>
+        <label for="f-end">Bis</label>
+        <input type="time" id="f-end" value="16:15">
+      </div>
+    </div>
+    <div id="durationFields" style="display:none; margin-top:10px;">
+      <label for="f-duration">Stunden</label>
+      <input type="number" id="f-duration" step="0.25" min="0" placeholder="z. B. 2">
+    </div>
+
+    <label>Pause</label>
+    <div class="quickbtns" id="breakBtns">
+      <button type="button" class="qbtn active" data-break="0">0 Min</button>
+      <button type="button" class="qbtn" data-break="15">15 Min</button>
+      <button type="button" class="qbtn" data-break="30">30 Min</button>
+      <button type="button" class="qbtn" data-break="45">45 Min</button>
+    </div>
+    <input type="number" id="f-break-custom" placeholder="Andere Pause in Minuten" style="margin-top:8px;">
+
+    <label>Aufmaß</label>
+    <div class="segmented" id="aufmassSeg">
+      <button type="button" class="active" data-aufmass="nein">Nein</button>
+      <button type="button" data-aufmass="ja">Ja</button>
+    </div>
+
+    <div class="hint" id="computedHint" style="margin-top:12px; font-size:13px;"></div>
+
+    <button class="btn btn-primary" id="saveEntryBtn">Eintrag speichern</button>
+  </div>
+
+  <div class="card">
+    <h2>Erfasste Einträge <span class="badge" id="entryCountBadge">0</span></h2>
+    <div id="entryListWrap">
+      <div class="empty-state">Noch keine Einträge erfasst.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Export</h2>
+    <label for="f-employee">Name, Vorname (Mitarbeiter)</label>
+    <input type="text" id="f-employee" placeholder="z. B. Sebastian Bruns">
+    <div class="hint">Wird auf jedem Blatt oben eingetragen. Pro Monat wird automatisch ein neues Blatt begonnen, ebenso sobald ein Blatt voll ist (8 Einträge) — passend zur Vorlage. Nach dem Export wandern die exportierten Einträge automatisch ins Archiv, damit beim nächsten Export nur noch neue Einträge dabei sind.</div>
+    <div class="btn-block-row">
+      <button class="btn btn-secondary" id="clearAllBtn">Alle löschen</button>
+      <button class="btn btn-primary" id="exportBtn">Als PDF exportieren</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Archiv <span class="badge" id="archiveCountBadge">0</span></h2>
+    <div class="hint" style="margin-top:0;">Bereits exportierte Einträge. Bei Bedarf kannst du einzelne Einträge oder einen ganzen Export zurück in die aktive Liste holen, um sie zu ändern.</div>
+    <div id="archiveWrap" style="margin-top:10px;">
+      <div class="empty-state">Noch keine Exporte im Archiv.</div>
+    </div>
+  </div>
+
+  <div class="footer-note">Alle Daten bleiben lokal auf diesem Gerät gespeichert.</div>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<div class="modal-backdrop" id="editModalBackdrop">
+  <div class="modal" id="editModal"></div>
+</div>
+
+<script src="vendor/pdf-lib.min.js"></script>
+<script src="vendor/fontkit.umd.min.js"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
