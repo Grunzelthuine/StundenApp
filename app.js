@@ -103,25 +103,78 @@ let timeMode = 'range';
 let breakMinutes = 0;
 let aufmass = 'nein';
 
+const QUARTER_MAX = 95; // Schieberegler-Index für 23:45 (letzter 15-Minuten-Schritt des Tages)
+
+function quarterIndexToHHMM(idx) {
+  const mins = idx * 15;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+function hhmmToQuarterIndex(hhmm) {
+  const mins = parseHM(hhmm);
+  return Math.min(QUARTER_MAX, Math.max(0, Math.round(mins / 15)));
+}
+
+function roundUpToQuarterIndex(date) {
+  const mins = date.getHours() * 60 + date.getMinutes();
+  return Math.min(QUARTER_MAX, Math.ceil(mins / 15));
+}
+
+function lastEndTimeForDate(dateISO) {
+  // Sucht rückwärts den zuletzt erfassten Eintrag desselben Datums mit Uhrzeit-von-bis
+  for (let i = state.entries.length - 1; i >= 0; i--) {
+    const e = state.entries[i];
+    if (e.date === dateISO && e.timeMode === 'range' && e.end) return e.end;
+  }
+  return null;
+}
+
+function setStartSliderHHMM(hhmm) {
+  const idx = hhmmToQuarterIndex(hhmm);
+  $('f-start').value = idx;
+  $('f-start-label').textContent = quarterIndexToHHMM(idx);
+}
+
+function setEndSliderHHMM(hhmm) {
+  const idx = hhmmToQuarterIndex(hhmm);
+  $('f-end').value = idx;
+  $('f-end-label').textContent = quarterIndexToHHMM(idx);
+}
+
+function updateTimeDefaults() {
+  const dateVal = $('f-date').value || todayISO();
+  const lastEnd = lastEndTimeForDate(dateVal);
+  setStartSliderHHMM(lastEnd || '07:30');
+  setEndSliderHHMM(quarterIndexToHHMM(roundUpToQuarterIndex(new Date())));
+  updateComputedHint();
+}
+
 function initForm() {
   $('f-date').value = todayISO();
   $('f-employee').value = state.employeeName || '';
   refreshCustomerList();
+  updateTimeDefaults();
 
   document.querySelectorAll('[data-date-shift]').forEach(btn => {
     btn.addEventListener('click', () => {
       $('f-date').value = todayISO(parseInt(btn.dataset.dateShift, 10));
+      updateTimeDefaults();
     });
   });
 
   $('datePrevBtn').addEventListener('click', () => {
     const cur = $('f-date').value || todayISO();
     $('f-date').value = shiftDateISO(cur, -1);
+    updateTimeDefaults();
   });
   $('dateNextBtn').addEventListener('click', () => {
     const cur = $('f-date').value || todayISO();
     $('f-date').value = shiftDateISO(cur, 1);
+    updateTimeDefaults();
   });
+  $('f-date').addEventListener('change', updateTimeDefaults);
 
   $('timeModeSeg').addEventListener('click', (e) => {
     const btn = e.target.closest('button[data-mode]');
@@ -158,9 +211,15 @@ function initForm() {
     document.querySelectorAll('#aufmassSeg button').forEach(b => b.classList.toggle('active', b === btn));
   });
 
-  ['f-start', 'f-end', 'f-duration'].forEach(id => {
-    $(id).addEventListener('input', updateComputedHint);
+  $('f-start').addEventListener('input', () => {
+    $('f-start-label').textContent = quarterIndexToHHMM(parseInt($('f-start').value, 10));
+    updateComputedHint();
   });
+  $('f-end').addEventListener('input', () => {
+    $('f-end-label').textContent = quarterIndexToHHMM(parseInt($('f-end').value, 10));
+    updateComputedHint();
+  });
+  $('f-duration').addEventListener('input', updateComputedHint);
 
   $('f-customer').addEventListener('input', () => {
     const name = $('f-customer').value.trim();
@@ -192,39 +251,7 @@ function initForm() {
     saveState();
   });
 
-  // Diktier-Badges: bei Unterstützung optional SpeechRecognition anstoßen, sonst nur Fokus
-  document.querySelectorAll('.mic-badge').forEach(badge => {
-    badge.style.pointerEvents = 'auto';
-    badge.style.cursor = 'pointer';
-    badge.addEventListener('click', () => {
-      const field = badge.parentElement.querySelector('input, textarea');
-      if (!field) return;
-      if (tryStartSpeechRecognition(field)) return;
-      field.focus();
-    });
-  });
-
   updateComputedHint();
-}
-
-function tryStartSpeechRecognition(field) {
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) return false;
-  try {
-    const rec = new SR();
-    rec.lang = 'de-DE';
-    rec.interimResults = false;
-    rec.maxAlternatives = 1;
-    rec.onresult = (ev) => {
-      const text = ev.results[0][0].transcript;
-      field.value = field.value ? (field.value.trim() + ' ' + text) : text;
-      field.dispatchEvent(new Event('input'));
-    };
-    rec.start();
-    return true;
-  } catch (e) {
-    return false;
-  }
 }
 
 function updateComputedHint() {
@@ -252,8 +279,8 @@ function readFormAsEntry(preview = false) {
     breakMinutes: breakMinutes || 0
   };
   if (timeMode === 'range') {
-    entry.start = $('f-start').value || '00:00';
-    entry.end = $('f-end').value || '00:00';
+    entry.start = quarterIndexToHHMM(parseInt($('f-start').value, 10) || 0);
+    entry.end = quarterIndexToHHMM(parseInt($('f-end').value, 10) || 0);
   } else {
     entry.durationHours = parseFloat($('f-duration').value) || 0;
   }
@@ -283,9 +310,31 @@ function saveEntry() {
   refreshCustomerList();
   showToast('Eintrag gespeichert.');
 
-  // Formular teilweise zurücksetzen, Datum/Kunde beibehalten für schnelle Folgeeinträge am selben Tag
+  resetEntryFormFields();
+}
+
+function resetEntryFormFields() {
+  // Datum bleibt stehen (für weitere Einträge am selben Tag), alle anderen Felder werden geleert
+  $('f-customer').value = '';
+  $('f-customer-address').value = '';
+  $('newCustomerBox').style.display = 'none';
+  document.querySelector('label[for="f-customer-address"]').textContent = 'Adresse (Neukunde) — Straße/Ort, Telefon';
   $('f-desc').value = '';
+
+  timeMode = 'range';
+  document.querySelectorAll('#timeModeSeg button').forEach(b => b.classList.toggle('active', b.dataset.mode === 'range'));
+  $('rangeFields').style.display = 'block';
+  $('durationFields').style.display = 'none';
+  $('f-duration').value = '';
+
+  breakMinutes = 0;
   $('f-break-custom').value = '';
+  document.querySelectorAll('#breakBtns .qbtn').forEach(b => b.classList.toggle('active', b.dataset.break === '0'));
+
+  aufmass = 'nein';
+  document.querySelectorAll('#aufmassSeg button').forEach(b => b.classList.toggle('active', b.dataset.aufmass === 'nein'));
+
+  updateTimeDefaults(); // Von = letztes Bis desselben Tages (oder 07:30), Bis = jetzt aufgerundet
 }
 
 function refreshCustomerList() {
@@ -380,9 +429,15 @@ function openEditModal(id) {
       <button type="button" data-mode="range" class="${e.timeMode==='range'?'active':''}">Uhrzeit</button>
       <button type="button" data-mode="duration" class="${e.timeMode==='duration'?'active':''}">Stunden</button>
     </div>
-    <div class="row" id="m-rangeFields" style="margin-top:10px; display:${e.timeMode==='range'?'flex':'none'};">
-      <div><label>Von</label><input type="time" id="m-start" value="${e.start||'07:30'}"></div>
-      <div><label>Bis</label><input type="time" id="m-end" value="${e.end||'16:15'}"></div>
+    <div id="m-rangeFields" style="margin-top:10px; display:${e.timeMode==='range'?'block':'none'};">
+      <div class="time-slider-group">
+        <label>Von <span class="time-value" id="m-start-label">${e.start||'07:30'}</span></label>
+        <input type="range" id="m-start" min="0" max="95" step="1" value="${hhmmToQuarterIndex(e.start||'07:30')}">
+      </div>
+      <div class="time-slider-group">
+        <label>Bis <span class="time-value" id="m-end-label">${e.end||'16:15'}</span></label>
+        <input type="range" id="m-end" min="0" max="95" step="1" value="${hhmmToQuarterIndex(e.end||'16:15')}">
+      </div>
     </div>
     <div id="m-durationFields" style="margin-top:10px; display:${e.timeMode==='duration'?'block':'none'};">
       <label>Stunden</label><input type="number" id="m-duration" step="0.25" value="${e.durationHours||''}">
@@ -404,8 +459,14 @@ function openEditModal(id) {
     const btn = ev.target.closest('button[data-mode]'); if (!btn) return;
     mTimeMode = btn.dataset.mode;
     modal.querySelectorAll('#m-timeSeg button').forEach(b => b.classList.toggle('active', b===btn));
-    modal.querySelector('#m-rangeFields').style.display = mTimeMode==='range' ? 'flex':'none';
+    modal.querySelector('#m-rangeFields').style.display = mTimeMode==='range' ? 'block':'none';
     modal.querySelector('#m-durationFields').style.display = mTimeMode==='duration' ? 'block':'none';
+  });
+  modal.querySelector('#m-start').addEventListener('input', (ev) => {
+    modal.querySelector('#m-start-label').textContent = quarterIndexToHHMM(parseInt(ev.target.value, 10));
+  });
+  modal.querySelector('#m-end').addEventListener('input', (ev) => {
+    modal.querySelector('#m-end-label').textContent = quarterIndexToHHMM(parseInt(ev.target.value, 10));
   });
   modal.querySelector('#m-aufmassSeg').addEventListener('click', (ev) => {
     const btn = ev.target.closest('button[data-aufmass]'); if (!btn) return;
@@ -419,8 +480,8 @@ function openEditModal(id) {
     e.desc = modal.querySelector('#m-desc').value.trim();
     e.timeMode = mTimeMode;
     if (mTimeMode === 'range') {
-      e.start = modal.querySelector('#m-start').value;
-      e.end = modal.querySelector('#m-end').value;
+      e.start = quarterIndexToHHMM(parseInt(modal.querySelector('#m-start').value, 10));
+      e.end = quarterIndexToHHMM(parseInt(modal.querySelector('#m-end').value, 10));
     } else {
       e.durationHours = parseFloat(modal.querySelector('#m-duration').value) || 0;
     }
@@ -766,18 +827,17 @@ function drawEntryRow(page, font, row, entry, dailyTotalHours_, isLastOfDay) {
     page.drawText(zg, { x: zgCenterX - zgWidth/2, y: topToPdfY((row.top+row.bottom)/2 - 3.5), size, font });
   }
 
-  // Aufmaß: das zutreffende Wort ("Ja"/"Nein") einkreisen, statt es zu überdecken
+  // Aufmaß: das zutreffende Kästchen ("Ja"/"Nein") mit einem X markieren
   const boxX0 = entry.aufmass === 'ja' ? TEMPLATE.aufmass.jaX0 : TEMPLATE.aufmass.neinX0;
   const boxX1 = entry.aufmass === 'ja' ? TEMPLATE.aufmass.jaX1 : TEMPLATE.aufmass.neinX1;
-  const cx = (boxX0 + boxX1) / 2;
   const cyTop = (row.aufmassTop + row.aufmassBottom) / 2;
-  page.drawEllipse({
-    x: cx, y: topToPdfY(cyTop),
-    xScale: (boxX1 - boxX0) / 2 - 1.5,
-    yScale: 6.5,
-    borderColor: rgb(0, 0, 0),
-    borderWidth: 1.1
-  });
+  const padX = 3, padY = 6;
+  const x0 = boxX0 + padX, x1 = boxX1 - padX;
+  const yTopPt = topToPdfY(cyTop - padY);
+  const yBotPt = topToPdfY(cyTop + padY);
+  const xColor = rgb(0, 0, 0);
+  page.drawLine({ start: { x: x0, y: yTopPt }, end: { x: x1, y: yBotPt }, thickness: 1.3, color: xColor });
+  page.drawLine({ start: { x: x0, y: yBotPt }, end: { x: x1, y: yTopPt }, thickness: 1.3, color: xColor });
 }
 
 // ---------- Service Worker ----------

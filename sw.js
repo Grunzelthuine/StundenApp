@@ -6,6 +6,7 @@ const ASSETS = [
   './app.js',
   './manifest.json',
   './assets/template.pdf',
+  './assets/logo.jpg',
   './icons/icon-192.png',
   './icons/icon-512.png',
   './vendor/pdf-lib.min.js',
