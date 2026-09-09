@@ -1,4 +1,4 @@
-const CACHE_NAME = 'stundenzettel-v1';
+const CACHE_NAME = 'stundenzettel-v2';
 const ASSETS = [
   './',
   './index.html',
@@ -29,16 +29,14 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
+  if (event.request.method !== 'GET') return;
   event.respondWith(
-    caches.match(event.request).then((cached) => {
-      if (cached) return cached;
-      return fetch(event.request).then((resp) => {
-        try {
-          const copy = resp.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
-        } catch (e) { /* ignore */ }
-        return resp;
-      }).catch(() => cached);
-    })
+    fetch(event.request).then((resp) => {
+      try {
+        const copy = resp.clone();
+        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+      } catch (e) { /* ignore */ }
+      return resp;
+    }).catch(() => caches.match(event.request))
   );
 });
