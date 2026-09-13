@@ -154,6 +154,11 @@
   <div class="card">
     <h2>Neuer Eintrag</h2>
 
+    <label for="f-freetext">Klartext-Erfassung (optional)</label>
+    <textarea id="f-freetext" rows="3" placeholder="z. B. „Ich war heute von 7:30 bis 15:30 bei Familie Müller und habe Lampen installiert. Dabei habe ich 45 Minuten Pause gemacht.“"></textarea>
+    <div class="hint">Antippen, über die Mikrofon-Taste der Tastatur diktieren, dann „Satz analysieren“ tippen — die Felder unten werden automatisch ausgefüllt. Bitte danach kurz prüfen und bei Bedarf korrigieren, bevor du speicherst. Alternativ die Felder unten auch einfach einzeln ausfüllen.</div>
+    <button type="button" class="btn btn-secondary" id="parseFreeTextBtn">Satz analysieren</button>
+
     <label for="f-date">Datum</label>
     <div class="date-nav">
       <button type="button" id="datePrevBtn" class="date-arrow-btn" aria-label="Ein Tag zurück">◀</button>

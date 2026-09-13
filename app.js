@@ -95,6 +95,203 @@ function monthKey(iso) { return iso.slice(0, 7); } // YYYY-MM
 
 function uid() { return 'e' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 
+// ---------- Klartext-Erfassung (Freitext-Parser) ----------
+
+// Deutsche Zahlwörter 0–59, für den Fall, dass die Diktierfunktion Zeiten/Minuten
+// als Wort statt als Ziffer ausgibt (z. B. "fünfundvierzig" statt "45").
+const GER_NUM_WORDS = {
+  'null':0,'ein':1,'eine':1,'eins':1,'zwei':2,'drei':3,'vier':4,'fünf':5,'sechs':6,'sieben':7,'acht':8,'neun':9,
+  'zehn':10,'elf':11,'zwölf':12,'dreizehn':13,'vierzehn':14,'fünfzehn':15,'sechzehn':16,'siebzehn':17,'achtzehn':18,'neunzehn':19,
+  'zwanzig':20,'einundzwanzig':21,'zweiundzwanzig':22,'dreiundzwanzig':23,'vierundzwanzig':24,'fünfundzwanzig':25,
+  'sechsundzwanzig':26,'siebenundzwanzig':27,'achtundzwanzig':28,'neunundzwanzig':29,
+  'dreißig':30,'einunddreißig':31,'zweiunddreißig':32,'dreiunddreißig':33,'vierunddreißig':34,'fünfunddreißig':35,
+  'sechsunddreißig':36,'siebenunddreißig':37,'achtunddreißig':38,'neununddreißig':39,
+  'vierzig':40,'einundvierzig':41,'zweiundvierzig':42,'dreiundvierzig':43,'vierundvierzig':44,'fünfundvierzig':45,
+  'sechsundvierzig':46,'siebenundvierzig':47,'achtundvierzig':48,'neunundvierzig':49,
+  'fünfzig':50,'einundfünfzig':51,'zweiundfünfzig':52,'dreiundfünfzig':53,'vierundfünfzig':54,'fünfundfünfzig':55,
+  'sechsundfünfzig':56,'siebenundfünfzig':57,'achtundfünfzig':58,'neunundfünfzig':59
+};
+const NUMWORD_PATTERN = Object.keys(GER_NUM_WORDS).sort((a, b) => b.length - a.length).join('|');
+
+function numToken(str) {
+  if (str == null) return null;
+  const s = String(str).trim().toLowerCase();
+  if (/^\d+$/.test(s)) return parseInt(s, 10);
+  return Object.prototype.hasOwnProperty.call(GER_NUM_WORDS, s) ? GER_NUM_WORDS[s] : null;
+}
+
+function parseTimeExpr(str) {
+  if (!str) return null;
+  str = str.trim();
+  let m = str.match(/^(\d{1,2})[:.](\d{2})/);
+  if (m) return { h: +m[1], m: +m[2] };
+  m = str.match(new RegExp(`^(${NUMWORD_PATTERN}|\\d{1,2})\\s*uhr\\s*(${NUMWORD_PATTERN}|\\d{1,2})?`, 'i'));
+  if (m) {
+    const h = numToken(m[1]);
+    const mm = m[2] ? numToken(m[2]) : 0;
+    if (h != null) return { h, m: mm || 0 };
+  }
+  m = str.match(new RegExp(`^(${NUMWORD_PATTERN}|\\d{1,2})$`, 'i'));
+  if (m) {
+    const h = numToken(m[1]);
+    if (h != null) return { h, m: 0 };
+  }
+  return null;
+}
+
+function parseFreeText(rawText) {
+  const text = (rawText || '').trim();
+  const result = { date: null, timeMode: null, start: null, end: null, durationHours: null,
+    breakMinutes: null, customer: null, aufmass: null, desc: '', recognized: [] };
+  if (!text) return result;
+
+  const removeRanges = [];
+
+  // Datum
+  let m = text.match(/\bvorgestern\b/i);
+  if (m) { result.date = todayISO(-2); removeRanges.push([m.index, m.index + m[0].length]); result.recognized.push('Datum: vorgestern'); }
+  else if ((m = text.match(/\bgestern\b/i))) { result.date = todayISO(-1); removeRanges.push([m.index, m.index + m[0].length]); result.recognized.push('Datum: gestern'); }
+  else if ((m = text.match(/\bheute\b/i))) { result.date = todayISO(0); removeRanges.push([m.index, m.index + m[0].length]); result.recognized.push('Datum: heute'); }
+  else if ((m = text.match(/\bam\s+(\d{1,2})\.(\d{1,2})\.(\d{4})?/i))) {
+    const day = m[1].padStart(2, '0'), month = m[2].padStart(2, '0');
+    const year = m[3] || String(new Date().getFullYear());
+    result.date = `${year}-${month}-${day}`;
+    removeRanges.push([m.index, m.index + m[0].length]);
+    result.recognized.push(`Datum: ${day}.${month}.${year}`);
+  }
+
+  // Zeitspanne "von X bis Y"
+  m = text.match(/\bvon\s+(.+?)\s+bis\s+(.+?)(?=\s+bei\b|\s+und\b|,|\.|$)/i);
+  if (m) {
+    const t1 = parseTimeExpr(m[1]);
+    const t2 = parseTimeExpr(m[2]);
+    if (t1 && t2) {
+      result.timeMode = 'range';
+      result.start = `${String(t1.h).padStart(2, '0')}:${String(t1.m).padStart(2, '0')}`;
+      result.end = `${String(t2.h).padStart(2, '0')}:${String(t2.m).padStart(2, '0')}`;
+      removeRanges.push([m.index, m.index + m[0].length]);
+      result.recognized.push(`Zeit: ${result.start}–${result.end}`);
+    }
+  }
+  if (!result.timeMode) {
+    // Feste Stundenzahl, z. B. "3 Stunden gearbeitet" (aber nicht "3 Stunden Pause")
+    m = text.match(new RegExp(`\\b(${NUMWORD_PATTERN}|\\d{1,2}(?:[.,]\\d+)?)\\s*stunden?\\b(?!\\s*pause)`, 'i'));
+    if (m) {
+      const raw = m[1].replace(',', '.');
+      const val = /^\d/.test(raw) ? parseFloat(raw) : numToken(raw);
+      if (val != null && val > 0) {
+        result.timeMode = 'duration';
+        result.durationHours = val;
+        removeRanges.push([m.index, m.index + m[0].length]);
+        result.recognized.push(`Dauer: ${formatHoursDE(val)} Std`);
+      }
+    }
+  }
+
+  // Pause
+  m = text.match(new RegExp(`(${NUMWORD_PATTERN}|\\d{1,3})\\s*(?:minuten|min)\\.?\\s*pause`, 'i'))
+    || text.match(new RegExp(`pause\\s*(?:von|:)?\\s*(${NUMWORD_PATTERN}|\\d{1,3})\\s*(?:minuten|min)`, 'i'));
+  if (m) {
+    const v = /^\d/.test(m[1]) ? parseInt(m[1], 10) : numToken(m[1]);
+    if (v != null) { result.breakMinutes = v; result.recognized.push(`Pause: ${v} Min`); }
+  } else if ((m = text.match(/eine\s+halbe\s+stunde\s+pause/i))) {
+    result.breakMinutes = 30; result.recognized.push('Pause: 30 Min');
+  } else if ((m = text.match(new RegExp(`(${NUMWORD_PATTERN}|\\d{1,2})\\s*stunden?\\s*pause`, 'i')))) {
+    const v = /^\d/.test(m[1]) ? parseInt(m[1], 10) : numToken(m[1]);
+    if (v != null) { result.breakMinutes = v * 60; result.recognized.push(`Pause: ${v * 60} Min`); }
+  }
+  if (result.breakMinutes != null) {
+    // Den ganzen Satz-/Teilsatz rund um "Pause" aus der späteren Beschreibung entfernen
+    // (z.B. "Dabei habe ich 45 Minuten Pause gemacht"), nicht nur die reine Zahl.
+    // Grenzen sind Satzzeichen ODER Kommas, damit bei Aufzählungen ("…, 30 Minuten Pause.")
+    // nicht versehentlich der ganze vorherige Satzteil mitgelöscht wird.
+    const sentenceMatch = text.match(/[^.!?,]*\bpause\b[^.!?,]*[.,!?]?/i);
+    if (sentenceMatch) removeRanges.push([sentenceMatch.index, sentenceMatch.index + sentenceMatch[0].length]);
+    else removeRanges.push([m.index, m.index + m[0].length]);
+  }
+
+  // Kunde
+  m = text.match(/\bbei\s+(?:der\s+|den\s+)?(?:familie|firma|kunden?)?\s*([^\n,]+?)(?=\s+(?:und|war|habe)\b|,|\.|$)/i);
+  if (m) {
+    const name = m[1].trim().replace(/^(familie|firma|kunden?)\s+/i, '');
+    if (name) {
+      result.customer = name;
+      removeRanges.push([m.index, m.index + m[0].length]);
+      result.recognized.push(`Kunde: ${name}`);
+    }
+  }
+
+  // Aufmaß (Sonderzeichen "ß" wird von \b in JS nicht als Wortzeichen erkannt,
+  // daher Grenzen manuell über Lookaround statt \b prüfen)
+  if (/(?<![a-zäöü])aufmaß(?![a-zäöü])/i.test(text)) { result.aufmass = 'ja'; result.recognized.push('Aufmaß: Ja'); }
+
+  // Rest als Arbeitsbeschreibung: erkannte Abschnitte herausschneiden, Reste aufräumen
+  removeRanges.sort((a, b) => b[0] - a[0]);
+  let desc = text;
+  removeRanges.forEach(([s, e]) => { desc = desc.slice(0, s) + ' ' + desc.slice(e); });
+  desc = desc
+    .replace(/\bich\s+war\b/gi, ' ')
+    .replace(/\bund\s+habe\b/gi, ' ')
+    .replace(/\bhabe\s+ich\b/gi, ' ')
+    .replace(/\bdabei\b/gi, ' ')
+    .replace(/^\s*und\b/i, '')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/\s+([,.!?])/g, '$1')
+    .replace(/^[\s,.\-]+/, '')
+    .replace(/[\s,.\-]+$/, '')
+    .trim();
+  if (desc) desc = desc.charAt(0).toUpperCase() + desc.slice(1);
+  result.desc = desc;
+
+  return result;
+}
+
+function applyFreeTextResult(result) {
+  if (result.date) { $('f-date').value = result.date; }
+  updateTimeDefaults();
+
+  if (result.timeMode === 'range') {
+    timeMode = 'range';
+    document.querySelectorAll('#timeModeSeg button').forEach(b => b.classList.toggle('active', b.dataset.mode === 'range'));
+    $('rangeFields').style.display = 'block';
+    $('durationFields').style.display = 'none';
+    setStartSliderHHMM(result.start);
+    setEndSliderHHMM(result.end);
+  } else if (result.timeMode === 'duration') {
+    timeMode = 'duration';
+    document.querySelectorAll('#timeModeSeg button').forEach(b => b.classList.toggle('active', b.dataset.mode === 'duration'));
+    $('rangeFields').style.display = 'none';
+    $('durationFields').style.display = 'block';
+    $('f-duration').value = result.durationHours;
+  }
+
+  if (result.breakMinutes != null) {
+    breakMinutes = result.breakMinutes;
+    $('f-break-custom').value = '';
+    let matched = false;
+    document.querySelectorAll('#breakBtns .qbtn').forEach(b => {
+      const isMatch = parseInt(b.dataset.break, 10) === breakMinutes;
+      b.classList.toggle('active', isMatch);
+      if (isMatch) matched = true;
+    });
+    if (!matched) $('f-break-custom').value = breakMinutes;
+  }
+
+  if (result.customer) {
+    $('f-customer').value = result.customer;
+    $('f-customer').dispatchEvent(new Event('input'));
+  }
+
+  if (result.desc) $('f-desc').value = result.desc;
+
+  if (result.aufmass) {
+    aufmass = result.aufmass;
+    document.querySelectorAll('#aufmassSeg button').forEach(b => b.classList.toggle('active', b.dataset.aufmass === result.aufmass));
+  }
+
+  updateComputedHint();
+}
+
 // ---------- Formular-Logik ----------
 
 const $ = (id) => document.getElementById(id);
@@ -234,6 +431,18 @@ function initForm() {
     }
   });
 
+  $('parseFreeTextBtn').addEventListener('click', () => {
+    const text = $('f-freetext').value.trim();
+    if (!text) { showToast('Bitte zuerst einen Satz eingeben oder diktieren.'); return; }
+    const result = parseFreeText(text);
+    applyFreeTextResult(result);
+    if (result.recognized.length) {
+      showToast('Erkannt: ' + result.recognized.join(' · ') + ' — bitte prüfen.');
+    } else {
+      showToast('Konnte nichts Eindeutiges erkennen — bitte Felder unten manuell ausfüllen.');
+    }
+  });
+
   $('saveEntryBtn').addEventListener('click', saveEntry);
   $('clearAllBtn').addEventListener('click', () => {
     if (state.entries.length === 0) return;
@@ -315,6 +524,7 @@ function saveEntry() {
 
 function resetEntryFormFields() {
   // Datum bleibt stehen (für weitere Einträge am selben Tag), alle anderen Felder werden geleert
+  $('f-freetext').value = '';
   $('f-customer').value = '';
   $('f-customer-address').value = '';
   $('newCustomerBox').style.display = 'none';
