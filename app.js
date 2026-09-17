@@ -340,6 +340,45 @@ function setEndSliderHHMM(hhmm) {
   $('f-end-label').textContent = quarterIndexToHHMM(idx);
 }
 
+// Verhindert, dass eine Berührung/Klick an einer beliebigen Stelle des Schiebereglers
+// (außerhalb des Reglerknopfs) den Wert springen lässt — nur ein Ziehen am Knopf selbst
+// soll die Uhrzeit verändern.
+function isPointerOnThumb(inputEl, clientX) {
+  const rect = inputEl.getBoundingClientRect();
+  const min = parseFloat(inputEl.min) || 0;
+  const max = parseFloat(inputEl.max) || 100;
+  const val = parseFloat(inputEl.value);
+  const thumbSize = 26; // an unsere CSS-Reglergröße angepasst
+  const usableWidth = Math.max(0, rect.width - thumbSize);
+  const fraction = max > min ? (val - min) / (max - min) : 0;
+  const thumbCenterX = rect.left + thumbSize / 2 + fraction * usableWidth;
+  const hitRadius = thumbSize / 2 + 10; // etwas Toleranz für ungenaues Antippen
+  return Math.abs(clientX - thumbCenterX) <= hitRadius;
+}
+
+function restrictSliderToThumbDrag(inputEl) {
+  inputEl.addEventListener('pointerdown', (e) => {
+    if (!isPointerOnThumb(inputEl, e.clientX)) {
+      e.preventDefault();
+    }
+  });
+}
+
+// Sorgt dafür, dass "Von" nie gleich oder später als "Bis" stehen kann (und umgekehrt),
+// damit keine unmöglichen Zeiten wie "von 15:00 bis 11:30" entstehen können.
+function clampTimeSliders(startEl, endEl, movedEl) {
+  let startVal = parseInt(startEl.value, 10);
+  let endVal = parseInt(endEl.value, 10);
+  if (movedEl === startEl && startVal >= endVal) {
+    startVal = Math.max(0, endVal - 1);
+    startEl.value = startVal;
+  } else if (movedEl === endEl && endVal <= startVal) {
+    endVal = Math.min(QUARTER_MAX, startVal + 1);
+    endEl.value = endVal;
+  }
+  return { startVal, endVal };
+}
+
 function updateTimeDefaults() {
   const dateVal = $('f-date').value || todayISO();
   const lastEnd = lastEndTimeForDate(dateVal);
@@ -408,12 +447,17 @@ function initForm() {
     document.querySelectorAll('#aufmassSeg button').forEach(b => b.classList.toggle('active', b === btn));
   });
 
+  restrictSliderToThumbDrag($('f-start'));
+  restrictSliderToThumbDrag($('f-end'));
+
   $('f-start').addEventListener('input', () => {
-    $('f-start-label').textContent = quarterIndexToHHMM(parseInt($('f-start').value, 10));
+    const { startVal } = clampTimeSliders($('f-start'), $('f-end'), $('f-start'));
+    $('f-start-label').textContent = quarterIndexToHHMM(startVal);
     updateComputedHint();
   });
   $('f-end').addEventListener('input', () => {
-    $('f-end-label').textContent = quarterIndexToHHMM(parseInt($('f-end').value, 10));
+    const { endVal } = clampTimeSliders($('f-start'), $('f-end'), $('f-end'));
+    $('f-end-label').textContent = quarterIndexToHHMM(endVal);
     updateComputedHint();
   });
   $('f-duration').addEventListener('input', updateComputedHint);
@@ -672,11 +716,17 @@ function openEditModal(id) {
     modal.querySelector('#m-rangeFields').style.display = mTimeMode==='range' ? 'block':'none';
     modal.querySelector('#m-durationFields').style.display = mTimeMode==='duration' ? 'block':'none';
   });
-  modal.querySelector('#m-start').addEventListener('input', (ev) => {
-    modal.querySelector('#m-start-label').textContent = quarterIndexToHHMM(parseInt(ev.target.value, 10));
+  const mStartEl = modal.querySelector('#m-start');
+  const mEndEl = modal.querySelector('#m-end');
+  restrictSliderToThumbDrag(mStartEl);
+  restrictSliderToThumbDrag(mEndEl);
+  mStartEl.addEventListener('input', () => {
+    const { startVal } = clampTimeSliders(mStartEl, mEndEl, mStartEl);
+    modal.querySelector('#m-start-label').textContent = quarterIndexToHHMM(startVal);
   });
-  modal.querySelector('#m-end').addEventListener('input', (ev) => {
-    modal.querySelector('#m-end-label').textContent = quarterIndexToHHMM(parseInt(ev.target.value, 10));
+  mEndEl.addEventListener('input', () => {
+    const { endVal } = clampTimeSliders(mStartEl, mEndEl, mEndEl);
+    modal.querySelector('#m-end-label').textContent = quarterIndexToHHMM(endVal);
   });
   modal.querySelector('#m-aufmassSeg').addEventListener('click', (ev) => {
     const btn = ev.target.closest('button[data-aufmass]'); if (!btn) return;
