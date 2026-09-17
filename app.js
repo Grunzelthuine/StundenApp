@@ -504,6 +504,14 @@ function initForm() {
     saveState();
   });
 
+  $('backupExportBtn').addEventListener('click', exportDataBackup);
+  $('backupImportBtn').addEventListener('click', () => $('backupImportInput').click());
+  $('backupImportInput').addEventListener('change', (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (file) importDataBackup(file);
+    e.target.value = '';
+  });
+
   updateComputedHint();
 }
 
@@ -1098,6 +1106,104 @@ function drawEntryRow(page, font, row, entry, dailyTotalHours_, isLastOfDay) {
   const xColor = rgb(0, 0, 0);
   page.drawLine({ start: { x: x0, y: yTopPt }, end: { x: x1, y: yBotPt }, thickness: 1.3, color: xColor });
   page.drawLine({ start: { x: x0, y: yBotPt }, end: { x: x1, y: yTopPt }, thickness: 1.3, color: xColor });
+}
+
+// ---------- Datensicherung (JSON-Export/Import) ----------
+// Unabhängig vom localStorage: schützt davor, dass Einträge verloren gehen,
+// falls die App auf dem Handy (z.B. wegen eines hakenden Updates) neu eingerichtet
+// werden muss — Home-Bildschirm-Icons auf iOS haben teils ihren eigenen, isolierten
+// Speicher, der beim Löschen/Neuanlegen des Icons verloren geht.
+
+function exportDataBackup() {
+  const backup = {
+    type: 'stundenzettel-backup',
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    state: {
+      entries: state.entries,
+      archive: state.archive,
+      customers: state.customers,
+      employeeName: state.employeeName
+    }
+  };
+  const json = JSON.stringify(backup, null, 2);
+  const blob = new Blob([json], { type: 'application/json' });
+  const fname = `Stundenzettel_Sicherung_${new Date().toISOString().slice(0, 10)}.json`;
+  const url = URL.createObjectURL(blob);
+
+  const fallbackDownload = () => {
+    const a = document.createElement('a');
+    a.href = url; a.download = fname;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    showToast('Sicherung wurde heruntergeladen.');
+  };
+
+  const file = new File([blob], fname, { type: 'application/json' });
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    navigator.share({ files: [file], title: 'Stundenzettel-Sicherung' })
+      .then(() => showToast('Sicherung geteilt/gespeichert.'))
+      .catch(() => fallbackDownload());
+  } else {
+    fallbackDownload();
+  }
+}
+
+function importDataBackup(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    let data;
+    try { data = JSON.parse(reader.result); } catch (e) {
+      showToast('Datei konnte nicht gelesen werden — ist es eine gültige Sicherungsdatei?');
+      return;
+    }
+    const incoming = data && data.state ? data.state : data; // akzeptiert auch ein rohes state-Objekt
+    if (!incoming || !Array.isArray(incoming.entries)) {
+      showToast('Das ist keine gültige Stundenzettel-Sicherungsdatei.');
+      return;
+    }
+
+    const hasExisting = state.entries.length > 0 || state.archive.length > 0;
+    if (hasExisting) {
+      const ok = confirm('Es sind bereits Einträge vorhanden. Die Sicherung wird zu den bestehenden Einträgen hinzugefügt (nichts wird überschrieben oder gelöscht). Fortfahren?');
+      if (!ok) return;
+    }
+
+    const existingIds = new Set([
+      ...state.entries.map(e => e.id),
+      ...state.archive.flatMap(b => b.entries.map(e => e.id))
+    ]);
+
+    const newEntries = (incoming.entries || []).filter(e => e && e.id && !existingIds.has(e.id));
+    state.entries.push(...newEntries);
+    newEntries.forEach(e => existingIds.add(e.id));
+
+    const existingBatchIds = new Set(state.archive.map(b => b.id));
+    let importedArchiveEntries = 0;
+    (incoming.archive || []).forEach(batch => {
+      if (!batch || existingBatchIds.has(batch.id)) return;
+      const filteredEntries = (batch.entries || []).filter(e => e && e.id && !existingIds.has(e.id));
+      if (filteredEntries.length) {
+        state.archive.push({ ...batch, entries: filteredEntries });
+        filteredEntries.forEach(e => existingIds.add(e.id));
+        importedArchiveEntries += filteredEntries.length;
+      }
+    });
+
+    Object.entries(incoming.customers || {}).forEach(([key, val]) => {
+      if (!state.customers[key]) state.customers[key] = val;
+    });
+
+    if (!state.employeeName && incoming.employeeName) state.employeeName = incoming.employeeName;
+
+    saveState();
+    renderEntries();
+    renderArchive();
+    refreshCustomerList();
+    if ($('f-employee')) $('f-employee').value = state.employeeName || '';
+    showToast(`Sicherung eingespielt: ${newEntries.length} aktive + ${importedArchiveEntries} archivierte Einträge hinzugefügt.`);
+  };
+  reader.readAsText(file);
 }
 
 // ---------- Service Worker ----------

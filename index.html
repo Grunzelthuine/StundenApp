@@ -250,6 +250,16 @@
     </div>
   </div>
 
+  <div class="card">
+    <h2>Datensicherung</h2>
+    <div class="hint" style="margin-top:0;">Falls die App auf dem Handy mal neu eingerichtet werden muss (z. B. bei einem Update-Problem): Hier alle Daten (aktive Einträge, Archiv, Kundenliste) als Datei sichern und in der neuen Version wieder einspielen. Beim Einspielen wird nichts überschrieben oder gelöscht — die Sicherung wird zu vorhandenen Einträgen nur hinzugefügt.</div>
+    <div class="btn-block-row" style="margin-top:10px;">
+      <button class="btn btn-secondary" id="backupExportBtn">Sicherung exportieren</button>
+      <button class="btn btn-secondary" id="backupImportBtn">Sicherung einspielen</button>
+    </div>
+    <input type="file" id="backupImportInput" accept="application/json" style="display:none;">
+  </div>
+
   <div class="footer-note">Alle Daten bleiben lokal auf diesem Gerät gespeichert.</div>
 </main>
 
