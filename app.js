@@ -82,6 +82,12 @@ function formatDateShort(iso) {
   return `${d}.${m}.`;
 }
 
+function formatDateFileDE(iso) {
+  // Für Dateinamen: "YYYY-MM-DD" -> "DD.MM.YYYY"
+  const [y, m, d] = iso.split('-');
+  return `${d}.${m}.${y}`;
+}
+
 function formatDateLong(iso) {
   const d = new Date(iso + 'T00:00:00');
   const weekdays = ['So','Mo','Di','Mi','Do','Fr','Sa'];
@@ -929,14 +935,26 @@ async function exportPdf() {
   const pdfBytes = await outDoc.save();
   const blob = new Blob([pdfBytes], { type: 'application/pdf' });
   const url = URL.createObjectURL(blob);
-  const fname = `Stundenzettel_${employeeName ? employeeName.replace(/\s+/g,'_')+'_' : ''}${new Date().toISOString().slice(0,10)}.pdf`;
+
+  // Dateiname enthält den tatsächlichen Datumsbereich der exportierten Einträge
+  // (Stundenzettel_Name_Von_Bis.pdf bzw. nur ein Datum, wenn alles an einem Tag war)
+  // statt des Datums, an dem exportiert wurde.
+  const exportDates = [...new Set(state.entries.map(e => e.date))].sort();
+  const rangeLabel = exportDates.length
+    ? (exportDates[0] === exportDates[exportDates.length - 1]
+        ? formatDateFileDE(exportDates[0])
+        : `${formatDateFileDE(exportDates[0])}_${formatDateFileDE(exportDates[exportDates.length - 1])}`)
+    : formatDateFileDE(todayISO());
+  const fname = `Stundenzettel_${employeeName ? employeeName.replace(/\s+/g,'_')+'_' : ''}${rangeLabel}.pdf`;
 
   // Exportierte Einträge ins Archiv verschieben, damit der nächste Export nur noch neue Einträge enthält
   archiveCurrentEntries(fname);
 
   if (navigator.canShare && navigator.canShare({ files: [new File([blob], fname, { type: 'application/pdf' })] })) {
     try {
-      await navigator.share({ files: [new File([blob], fname, { type: 'application/pdf' })], title: 'Stundenzettel' });
+      // Bewusst OHNE "title" — iOS Safari legt beim Teilen mit files+title beim "In Dateien
+      // sichern" sonst zusätzlich eine .txt-Datei mit dem Titeltext an.
+      await navigator.share({ files: [new File([blob], fname, { type: 'application/pdf' })] });
       showToast('PDF geteilt/gespeichert. Einträge sind jetzt im Archiv.');
       return;
     } catch (e) { /* Nutzer hat abgebrochen -> Fallback Download */ }
@@ -1141,7 +1159,8 @@ function exportDataBackup() {
 
   const file = new File([blob], fname, { type: 'application/json' });
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
-    navigator.share({ files: [file], title: 'Stundenzettel-Sicherung' })
+    // Bewusst OHNE "title" — siehe Hinweis bei exportPdf() weiter oben.
+    navigator.share({ files: [file] })
       .then(() => showToast('Sicherung geteilt/gespeichert.'))
       .catch(() => fallbackDownload());
   } else {
