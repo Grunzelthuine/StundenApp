@@ -1108,6 +1108,27 @@ if ('serviceWorker' in navigator) {
   });
 }
 
+// Manuelles Update: räumt den installierten Service Worker + Cache komplett weg und lädt
+// die Seite danach neu, damit garantiert die aktuelle Version vom Server geladen wird —
+// unabhängig davon, ob die normale Hintergrund-Aktualisierung (noch) gegriffen hat.
+async function forceAppUpdate() {
+  showToast('Suche nach Updates …');
+  try {
+    if ('serviceWorker' in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(reg => reg.unregister()));
+    }
+    if ('caches' in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map(k => caches.delete(k)));
+    }
+  } catch (e) { /* auch bei Fehler trotzdem neu laden */ }
+  window.location.reload();
+}
+
+const updateBtnEl = document.getElementById('updateBtn');
+if (updateBtnEl) updateBtnEl.addEventListener('click', forceAppUpdate);
+
 // ---------- Init ----------
 
 initForm();
