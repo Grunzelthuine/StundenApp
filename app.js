@@ -363,11 +363,19 @@ function isPointerOnThumb(inputEl, clientX) {
 }
 
 function restrictSliderToThumbDrag(inputEl) {
-  inputEl.addEventListener('pointerdown', (e) => {
-    if (!isPointerOnThumb(inputEl, e.clientX)) {
+  // pointerdown reicht auf dem Desktop, aber manche Android-Browser übernehmen das
+  // "auf Berührungsposition springen" für <input type=range> intern über den nativen
+  // Touch-Pfad, bei dem preventDefault() auf pointerdown nicht zuverlässig greift —
+  // deshalb zusätzlich touchstart (explizit non-passive) mit derselben Prüfung abfangen.
+  const guard = (e) => {
+    const clientX = e.clientX != null ? e.clientX : (e.touches && e.touches[0] ? e.touches[0].clientX : null);
+    if (clientX == null) return;
+    if (!isPointerOnThumb(inputEl, clientX)) {
       e.preventDefault();
     }
-  });
+  };
+  inputEl.addEventListener('pointerdown', guard, { passive: false });
+  inputEl.addEventListener('touchstart', guard, { passive: false });
 }
 
 // Sorgt dafür, dass "Von" nie gleich oder später als "Bis" stehen kann (und umgekehrt),
