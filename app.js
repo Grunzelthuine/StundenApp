@@ -519,7 +519,6 @@ function initForm() {
   });
 
   $('archiveYearSel').addEventListener('change', renderArchiveMonthView);
-  $('archiveMonthSel').addEventListener('change', renderArchiveMonthView);
 
   $('backupExportBtn').addEventListener('click', exportDataBackup);
   $('backupImportBtn').addEventListener('click', () => $('backupImportInput').click());
@@ -1054,75 +1053,84 @@ function archiveYearsAvailable() {
 
 function populateArchiveMonthFilter() {
   const yearSel = $('archiveYearSel');
-  const monthSel = $('archiveMonthSel');
-  if (!yearSel || !monthSel) return;
-
+  if (!yearSel) return;
   const years = archiveYearsAvailable();
   const prevYear = yearSel.value;
   yearSel.innerHTML = years.map(y => `<option value="${y}">${y}</option>`).join('');
   yearSel.value = years.includes(prevYear) ? prevYear : String(new Date().getFullYear());
-
-  if (!monthSel.options.length) {
-    monthSel.innerHTML = MONATE.map((name, idx) => `<option value="${String(idx + 1).padStart(2, '0')}">${name}</option>`).join('');
-    monthSel.value = String(new Date().getMonth() + 1).padStart(2, '0');
-  }
 }
 
 function renderArchiveMonthView() {
   const yearSel = $('archiveYearSel');
-  const monthSel = $('archiveMonthSel');
-  const summaryEl = $('archiveMonthSummary');
-  const listEl = $('archiveMonthList');
-  if (!yearSel || !monthSel || !summaryEl || !listEl) return;
-
+  const wrap = $('archiveMonthsWrap');
+  if (!yearSel || !wrap) return;
   const year = yearSel.value;
-  const month = monthSel.value;
-  const monthKeyVal = `${year}-${month}`;
-  const monatName = MONATE[parseInt(month, 10) - 1];
 
-  const matches = []; // { entry, batchId }
-  state.archive.forEach(batch => {
-    batch.entries.forEach(e => {
-      if (monthKey(e.date) === monthKeyVal) matches.push({ entry: e, batchId: batch.id });
-    });
-  });
+  // Alle 12 Monate des gewählten Jahres anzeigen — jeder Monat einzeln aufklappbar,
+  // zugeklappt sieht man nur den Monatsnamen mit der Gesamtstundenzahl.
+  wrap.innerHTML = '';
+  for (let m = 1; m <= 12; m++) {
+    const monthStr = String(m).padStart(2, '0');
+    const monthKeyVal = `${year}-${monthStr}`;
+    const monatName = MONATE[m - 1];
 
-  const totalH = matches.reduce((sum, m) => sum + minutesToHoursDecimal(computeNetMinutes(m.entry)), 0);
-  summaryEl.textContent = matches.length
-    ? `${monatName} ${year}: ${formatHoursDE(totalH)} Std archiviert (${matches.length} Einträge)`
-    : `${monatName} ${year}: noch keine archivierten Einträge.`;
-
-  listEl.innerHTML = '';
-  const byDate = {};
-  matches.forEach(m => { (byDate[m.entry.date] = byDate[m.entry.date] || []).push(m); });
-  Object.keys(byDate).sort().forEach(date => {
-    const dayTotal = byDate[date].reduce((s, m) => s + minutesToHoursDecimal(computeNetMinutes(m.entry)), 0);
-    const gDiv = document.createElement('div');
-    gDiv.className = 'entry-group';
-    gDiv.innerHTML = `<div class="entry-group-date"><span>${formatDateLong(date)}</span><span class="total">Gesamt: ${formatHoursDE(dayTotal)} Std</span></div>`;
-    const list = document.createElement('div');
-    byDate[date].forEach(({ entry: e, batchId }) => {
-      const mins = computeNetMinutes(e);
-      const timeLabel = e.timeMode === 'range' ? `${e.start}–${e.end}` : `${formatHoursDE(e.durationHours)} Std`;
-      const item = document.createElement('div');
-      item.className = 'entry-item';
-      item.innerHTML = `
-        <div class="info">
-          <div class="customer">${escapeHtml(e.customer)} ${e.aufmass === 'ja' ? '<span class="badge">Aufmaß</span>' : ''}</div>
-          <div class="desc">${escapeHtml(e.desc)}</div>
-          <div class="meta">${timeLabel}${e.breakMinutes ? ` · ${e.breakMinutes} Min Pause` : ''} · ${formatHoursDE(minutesToHoursDecimal(mins))} Std</div>
-        </div>
-        <div class="actions">
-          <button class="icon-btn restore-one" title="Zurück in aktive Liste">↩️</button>
-        </div>`;
-      item.querySelector('.restore-one').addEventListener('click', () => {
-        restoreEntryFromArchive(batchId, e.id); // ruft renderArchive() auf, das auch diese Ansicht neu zeichnet
+    const matches = []; // { entry, batchId }
+    state.archive.forEach(batch => {
+      batch.entries.forEach(e => {
+        if (monthKey(e.date) === monthKeyVal) matches.push({ entry: e, batchId: batch.id });
       });
-      list.appendChild(item);
     });
-    gDiv.appendChild(list);
-    listEl.appendChild(gDiv);
-  });
+    const totalH = matches.reduce((sum, mm) => sum + minutesToHoursDecimal(computeNetMinutes(mm.entry)), 0);
+
+    const details = document.createElement('details');
+    details.className = 'archive-batch';
+    details.innerHTML = `
+      <summary>
+        <span>${monatName} <span class="badge">${formatHoursDE(totalH)} Std${matches.length ? ', ' + matches.length + ' ' + (matches.length === 1 ? 'Eintrag' : 'Einträge') : ''}</span></span>
+      </summary>
+      <div class="archive-batch-body">
+        <div class="archive-month-entry-list"></div>
+      </div>
+    `;
+
+    const listEl = details.querySelector('.archive-month-entry-list');
+    if (!matches.length) {
+      listEl.innerHTML = '<div class="empty-state">Keine archivierten Einträge in diesem Monat.</div>';
+    } else {
+      const byDate = {};
+      matches.forEach(mm => { (byDate[mm.entry.date] = byDate[mm.entry.date] || []).push(mm); });
+      Object.keys(byDate).sort().forEach(date => {
+        const dayTotal = byDate[date].reduce((s, mm) => s + minutesToHoursDecimal(computeNetMinutes(mm.entry)), 0);
+        const gDiv = document.createElement('div');
+        gDiv.className = 'entry-group';
+        gDiv.innerHTML = `<div class="entry-group-date"><span>${formatDateLong(date)}</span><span class="total">Gesamt: ${formatHoursDE(dayTotal)} Std</span></div>`;
+        const list = document.createElement('div');
+        byDate[date].forEach(({ entry: e, batchId }) => {
+          const mins = computeNetMinutes(e);
+          const timeLabel = e.timeMode === 'range' ? `${e.start}–${e.end}` : `${formatHoursDE(e.durationHours)} Std`;
+          const item = document.createElement('div');
+          item.className = 'entry-item';
+          item.innerHTML = `
+            <div class="info">
+              <div class="customer">${escapeHtml(e.customer)} ${e.aufmass === 'ja' ? '<span class="badge">Aufmaß</span>' : ''}</div>
+              <div class="desc">${escapeHtml(e.desc)}</div>
+              <div class="meta">${timeLabel}${e.breakMinutes ? ` · ${e.breakMinutes} Min Pause` : ''} · ${formatHoursDE(minutesToHoursDecimal(mins))} Std</div>
+            </div>
+            <div class="actions">
+              <button class="icon-btn restore-one" title="Zurück in aktive Liste">↩️</button>
+            </div>`;
+          item.querySelector('.restore-one').addEventListener('click', () => {
+            restoreEntryFromArchive(batchId, e.id); // ruft renderArchive() auf, das auch diese Ansicht neu zeichnet
+          });
+          list.appendChild(item);
+        });
+        gDiv.appendChild(list);
+        listEl.appendChild(gDiv);
+      });
+    }
+
+    wrap.appendChild(details);
+  }
 }
 
 function renderArchive() {
