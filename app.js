@@ -519,6 +519,7 @@ function initForm() {
   });
 
   $('archiveYearSel').addEventListener('change', renderArchiveMonthView);
+  $('archiveExportYearSel').addEventListener('change', renderArchive);
 
   $('backupExportBtn').addEventListener('click', exportDataBackup);
   $('backupImportBtn').addEventListener('click', () => $('backupImportInput').click());
@@ -1051,6 +1052,15 @@ function archiveYearsAvailable() {
   return [...years].sort((a, b) => b - a); // neuestes Jahr zuerst
 }
 
+function populateArchiveExportYearFilter() {
+  const sel = $('archiveExportYearSel');
+  if (!sel) return;
+  const years = archiveYearsAvailable();
+  const prev = sel.value;
+  sel.innerHTML = years.map(y => `<option value="${y}">${y}</option>`).join('');
+  sel.value = years.includes(prev) ? prev : years[0];
+}
+
 function populateArchiveMonthFilter() {
   const yearSel = $('archiveYearSel');
   if (!yearSel) return;
@@ -1136,16 +1146,34 @@ function renderArchiveMonthView() {
 function renderArchive() {
   populateArchiveMonthFilter();
   renderArchiveMonthView();
+  populateArchiveExportYearFilter();
 
   const wrap = $('archiveWrap');
   const totalArchived = state.archive.reduce((s, b) => s + b.entries.length, 0);
   $('archiveCountBadge').textContent = totalArchived;
+  const exportCountBadge = $('archiveExportCountBadge');
+  if (exportCountBadge) exportCountBadge.textContent = state.archive.length;
+
   if (state.archive.length === 0) {
     wrap.innerHTML = '<div class="empty-state">Noch keine Exporte im Archiv.</div>';
     return;
   }
+
+  // Exportliste nach dem gewählten Jahr filtern (ein Export "gehört" zu einem Jahr,
+  // wenn mindestens ein enthaltener Eintrag aus diesem Jahr ist) — hält die Liste
+  // übersichtlich, wenn im Laufe der Zeit viele Exporte zusammenkommen.
+  const exportYearSel = $('archiveExportYearSel');
+  const selectedExportYear = exportYearSel ? exportYearSel.value : null;
+  const visibleBatches = selectedExportYear
+    ? state.archive.filter(b => b.entries.some(e => e.date.startsWith(selectedExportYear)))
+    : state.archive;
+
   wrap.innerHTML = '';
-  state.archive.forEach(batch => {
+  if (visibleBatches.length === 0) {
+    wrap.innerHTML = `<div class="empty-state">Keine Exporte mit Einträgen aus ${selectedExportYear}.</div>`;
+    return;
+  }
+  visibleBatches.forEach(batch => {
     const totalH = batch.entries.reduce((sum, e) => sum + minutesToHoursDecimal(computeNetMinutes(e)), 0);
     const details = document.createElement('details');
     details.className = 'archive-batch';

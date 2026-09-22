@@ -135,6 +135,15 @@
   .archive-batch[open] summary::after{content:"▴";}
   .archive-batch-body{padding:0 14px 14px;}
   .archive-batch .entry-item{background:#fff;}
+  .archive-section{border:1px solid var(--line); border-radius:10px; margin-top:14px; overflow:hidden; background:#fff;}
+  .archive-section > summary{
+    list-style:none; cursor:pointer; padding:14px; font-size:15px; font-weight:700; color:var(--blue-dark);
+    display:flex; align-items:center;
+  }
+  .archive-section > summary::-webkit-details-marker{display:none;}
+  .archive-section > summary::after{content:"▾"; color:var(--muted); font-weight:400; margin-left:auto; padding-left:8px;}
+  .archive-section[open] > summary::after{content:"▴";}
+  .archive-section-body{padding:0 14px 14px;}
 </style>
 </head>
 <body>
@@ -247,15 +256,25 @@
     <h2>Archiv <span class="badge" id="archiveCountBadge">0</span></h2>
     <div class="hint" style="margin-top:0;">Bereits exportierte Einträge. Bei Bedarf kannst du einzelne Einträge oder einen ganzen Export zurück in die aktive Liste holen, um sie zu ändern.</div>
 
-    <label for="archiveYearSel" style="margin-top:12px;">Jahr</label>
-    <select id="archiveYearSel"></select>
-    <div id="archiveMonthsWrap" style="margin-top:10px;"></div>
+    <details class="archive-section">
+      <summary>Nach Monat</summary>
+      <div class="archive-section-body">
+        <label for="archiveYearSel">Jahr</label>
+        <select id="archiveYearSel"></select>
+        <div id="archiveMonthsWrap" style="margin-top:10px;"></div>
+      </div>
+    </details>
 
-    <div style="margin:18px 0 10px; border-top:1px solid var(--line);"></div>
-    <div class="hint" style="margin-top:0;">Alle Exporte, nach Exportzeitpunkt:</div>
-    <div id="archiveWrap" style="margin-top:10px;">
-      <div class="empty-state">Noch keine Exporte im Archiv.</div>
-    </div>
+    <details class="archive-section">
+      <summary>Alle Exporte <span class="badge" id="archiveExportCountBadge">0</span></summary>
+      <div class="archive-section-body">
+        <label for="archiveExportYearSel">Jahr</label>
+        <select id="archiveExportYearSel"></select>
+        <div id="archiveWrap" style="margin-top:10px;">
+          <div class="empty-state">Noch keine Exporte im Archiv.</div>
+        </div>
+      </div>
+    </details>
   </div>
 
   <div class="card">
