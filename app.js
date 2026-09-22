@@ -518,6 +518,9 @@ function initForm() {
     saveState();
   });
 
+  $('archiveYearSel').addEventListener('change', renderArchiveMonthView);
+  $('archiveMonthSel').addEventListener('change', renderArchiveMonthView);
+
   $('backupExportBtn').addEventListener('click', exportDataBackup);
   $('backupImportBtn').addEventListener('click', () => $('backupImportInput').click());
   $('backupImportInput').addEventListener('change', (e) => {
@@ -801,11 +804,50 @@ function topToPdfY(topY) {
   return TEMPLATE.pageHeight - topY;
 }
 
+function mergeEntriesByCustomerForExport(entries) {
+  // Fasst mehrere Einträge desselben Kunden am selben Tag (z.B. wenn der Kunde
+  // zwischendurch verlassen und später wieder aufgesucht wurde) zu EINER Export-Zeile
+  // zusammen: Netto-Stunden werden addiert, Beschreibungen zusammengeführt. Die
+  // ursprünglichen Einzeleinträge in der App/im Archiv bleiben davon unberührt —
+  // die Zusammenführung passiert ausschließlich für den PDF-Export.
+  const order = [];
+  const groupsByCustomer = {};
+  entries.forEach(e => {
+    const key = (e.customer || '').trim().toLowerCase();
+    if (!groupsByCustomer[key]) { groupsByCustomer[key] = []; order.push(key); }
+    groupsByCustomer[key].push(e);
+  });
+  const merged = [];
+  order.forEach(key => {
+    const group = groupsByCustomer[key];
+    if (group.length === 1) { merged.push(group[0]); return; }
+    const totalMinutes = group.reduce((sum, e) => sum + computeNetMinutes(e), 0);
+    const descs = [...new Set(group.map(e => (e.desc || '').trim()).filter(Boolean))];
+    const withAddress = group.find(e => e.address);
+    merged.push({
+      id: group.map(e => e.id).join('+'),
+      date: group[0].date,
+      customer: group[0].customer,
+      address: withAddress ? withAddress.address : '',
+      desc: descs.join(' + '),
+      aufmass: group.some(e => e.aufmass === 'ja') ? 'ja' : 'nein',
+      timeMode: 'duration',
+      durationHours: totalMinutes / 60,
+      breakMinutes: 0
+    });
+  });
+  return merged;
+}
+
 function buildExportPages() {
   // 1) nach Monat gruppieren (chronologisch), 2) innerhalb des Monats nach Datum gruppieren,
   // 3) Datums-Gruppen so auf Blätter packen, dass eine Datums-Gruppe NIE über zwei Blätter
   //    gesplittet wird (Vorgabe: reicht der Platz nicht, kommt ein komplett neues Blatt).
-  const dateGroups = groupedEntriesByDate(); // sortiert nach Datum
+  // Innerhalb jedes Tages werden mehrere Einträge desselben Kunden zu einer Zeile zusammengeführt.
+  const dateGroups = groupedEntriesByDate().map(g => ({
+    date: g.date,
+    entries: mergeEntriesByCustomerForExport(g.entries)
+  })); // sortiert nach Datum
   const byMonth = {};
   dateGroups.forEach(g => {
     const mk = monthKey(g.date);
@@ -1001,7 +1043,92 @@ function formatExportedAt(iso) {
   return `${dd}.${mm}.${d.getFullYear()}, ${hh}:${min} Uhr`;
 }
 
+// ---------- Archiv: Jahr/Monat-Übersicht ----------
+
+function archiveYearsAvailable() {
+  const years = new Set();
+  state.archive.forEach(b => b.entries.forEach(e => years.add(e.date.slice(0, 4))));
+  years.add(String(new Date().getFullYear()));
+  return [...years].sort((a, b) => b - a); // neuestes Jahr zuerst
+}
+
+function populateArchiveMonthFilter() {
+  const yearSel = $('archiveYearSel');
+  const monthSel = $('archiveMonthSel');
+  if (!yearSel || !monthSel) return;
+
+  const years = archiveYearsAvailable();
+  const prevYear = yearSel.value;
+  yearSel.innerHTML = years.map(y => `<option value="${y}">${y}</option>`).join('');
+  yearSel.value = years.includes(prevYear) ? prevYear : String(new Date().getFullYear());
+
+  if (!monthSel.options.length) {
+    monthSel.innerHTML = MONATE.map((name, idx) => `<option value="${String(idx + 1).padStart(2, '0')}">${name}</option>`).join('');
+    monthSel.value = String(new Date().getMonth() + 1).padStart(2, '0');
+  }
+}
+
+function renderArchiveMonthView() {
+  const yearSel = $('archiveYearSel');
+  const monthSel = $('archiveMonthSel');
+  const summaryEl = $('archiveMonthSummary');
+  const listEl = $('archiveMonthList');
+  if (!yearSel || !monthSel || !summaryEl || !listEl) return;
+
+  const year = yearSel.value;
+  const month = monthSel.value;
+  const monthKeyVal = `${year}-${month}`;
+  const monatName = MONATE[parseInt(month, 10) - 1];
+
+  const matches = []; // { entry, batchId }
+  state.archive.forEach(batch => {
+    batch.entries.forEach(e => {
+      if (monthKey(e.date) === monthKeyVal) matches.push({ entry: e, batchId: batch.id });
+    });
+  });
+
+  const totalH = matches.reduce((sum, m) => sum + minutesToHoursDecimal(computeNetMinutes(m.entry)), 0);
+  summaryEl.textContent = matches.length
+    ? `${monatName} ${year}: ${formatHoursDE(totalH)} Std archiviert (${matches.length} Einträge)`
+    : `${monatName} ${year}: noch keine archivierten Einträge.`;
+
+  listEl.innerHTML = '';
+  const byDate = {};
+  matches.forEach(m => { (byDate[m.entry.date] = byDate[m.entry.date] || []).push(m); });
+  Object.keys(byDate).sort().forEach(date => {
+    const dayTotal = byDate[date].reduce((s, m) => s + minutesToHoursDecimal(computeNetMinutes(m.entry)), 0);
+    const gDiv = document.createElement('div');
+    gDiv.className = 'entry-group';
+    gDiv.innerHTML = `<div class="entry-group-date"><span>${formatDateLong(date)}</span><span class="total">Gesamt: ${formatHoursDE(dayTotal)} Std</span></div>`;
+    const list = document.createElement('div');
+    byDate[date].forEach(({ entry: e, batchId }) => {
+      const mins = computeNetMinutes(e);
+      const timeLabel = e.timeMode === 'range' ? `${e.start}–${e.end}` : `${formatHoursDE(e.durationHours)} Std`;
+      const item = document.createElement('div');
+      item.className = 'entry-item';
+      item.innerHTML = `
+        <div class="info">
+          <div class="customer">${escapeHtml(e.customer)} ${e.aufmass === 'ja' ? '<span class="badge">Aufmaß</span>' : ''}</div>
+          <div class="desc">${escapeHtml(e.desc)}</div>
+          <div class="meta">${timeLabel}${e.breakMinutes ? ` · ${e.breakMinutes} Min Pause` : ''} · ${formatHoursDE(minutesToHoursDecimal(mins))} Std</div>
+        </div>
+        <div class="actions">
+          <button class="icon-btn restore-one" title="Zurück in aktive Liste">↩️</button>
+        </div>`;
+      item.querySelector('.restore-one').addEventListener('click', () => {
+        restoreEntryFromArchive(batchId, e.id); // ruft renderArchive() auf, das auch diese Ansicht neu zeichnet
+      });
+      list.appendChild(item);
+    });
+    gDiv.appendChild(list);
+    listEl.appendChild(gDiv);
+  });
+}
+
 function renderArchive() {
+  populateArchiveMonthFilter();
+  renderArchiveMonthView();
+
   const wrap = $('archiveWrap');
   const totalArchived = state.archive.reduce((s, b) => s + b.entries.length, 0);
   $('archiveCountBadge').textContent = totalArchived;

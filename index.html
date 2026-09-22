@@ -246,6 +246,22 @@
   <div class="card">
     <h2>Archiv <span class="badge" id="archiveCountBadge">0</span></h2>
     <div class="hint" style="margin-top:0;">Bereits exportierte Einträge. Bei Bedarf kannst du einzelne Einträge oder einen ganzen Export zurück in die aktive Liste holen, um sie zu ändern.</div>
+
+    <div class="row" style="margin-top:12px;">
+      <div>
+        <label for="archiveYearSel">Jahr</label>
+        <select id="archiveYearSel"></select>
+      </div>
+      <div>
+        <label for="archiveMonthSel">Monat</label>
+        <select id="archiveMonthSel"></select>
+      </div>
+    </div>
+    <div id="archiveMonthSummary" class="hint" style="margin-top:10px; font-size:14px; font-weight:600; color:var(--blue-dark);"></div>
+    <div id="archiveMonthList" style="margin-top:8px;"></div>
+
+    <div style="margin:18px 0 10px; border-top:1px solid var(--line);"></div>
+    <div class="hint" style="margin-top:0;">Alle Exporte, nach Exportzeitpunkt:</div>
     <div id="archiveWrap" style="margin-top:10px;">
       <div class="empty-state">Noch keine Exporte im Archiv.</div>
     </div>
