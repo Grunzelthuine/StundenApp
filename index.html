@@ -144,6 +144,16 @@
   .archive-section > summary::after{content:"▾"; color:var(--muted); font-weight:400; margin-left:auto; padding-left:8px;}
   .archive-section[open] > summary::after{content:"▴";}
   .archive-section-body{padding:0 14px 14px;}
+  .vac-card > summary{list-style:none; cursor:pointer; display:flex; align-items:center;}
+  .vac-card > summary::-webkit-details-marker{display:none;}
+  .vac-card > summary::after{content:"▾"; color:var(--muted); margin-left:auto; padding-left:8px;}
+  .vac-card[open] > summary::after{content:"▴";}
+  .vac-preview{border:1px solid var(--line); border-radius:10px; padding:8px 12px; background:#fafbfc;}
+  .vac-row{display:flex; justify-content:space-between; gap:10px; font-size:13.5px; padding:4px 0;}
+  .vac-row span:last-child{color:var(--muted); white-space:nowrap;}
+  .vac-total{border-top:1px solid var(--line); margin-top:4px; padding-top:8px; font-weight:700;}
+  .vac-total span:last-child{color:var(--blue-dark);}
+  .entry-item.vacation{background:#eef6ee; border-color:#cfe5d2;}
 </style>
 </head>
 <body>
@@ -232,6 +242,19 @@
     <div class="hint" id="computedHint" style="margin-top:12px; font-size:13px;"></div>
 
     <button class="btn btn-primary" id="saveEntryBtn">Eintrag speichern</button>
+  </div>
+
+  <div class="card">
+    <details class="vac-card" id="vacationCard">
+      <summary><h2 style="margin:0;">🏖️ Urlaub eintragen</h2></summary>
+      <div class="hint" style="margin-top:8px;">Zeitraum wählen — pro Kalenderwoche entsteht ein Eintrag mit allen Werktagen (Mo–Fr) ohne Feiertage (Niedersachsen), je 8 Std. Am Monatswechsel wird die Woche geteilt, da jeder Monat ein eigenes Blatt hat. Im Urlaub gearbeitete Stunden einfach oben als normalen Eintrag erfassen.</div>
+      <div class="row">
+        <div><label for="v-from">Von</label><input type="date" id="v-from"></div>
+        <div><label for="v-to">Bis</label><input type="date" id="v-to"></div>
+      </div>
+      <div id="vacationPreview" style="margin-top:10px;"></div>
+      <button class="btn btn-primary" id="saveVacationBtn">Urlaub eintragen</button>
+    </details>
   </div>
 
   <div class="card">

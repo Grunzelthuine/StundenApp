@@ -101,6 +101,142 @@ function monthKey(iso) { return iso.slice(0, 7); } // YYYY-MM
 
 function uid() { return 'e' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 
+// ---------- Urlaub: Feiertage Niedersachsen + Aufteilung in Wochen ----------
+
+const URLAUB_STUNDEN_PRO_TAG = 8;
+
+function isVacation(e) { return !!e && e.type === 'urlaub'; }
+
+function easterSunday(year) {
+  // Anonymer gregorianischer Algorithmus (Meeus/Jones/Butcher)
+  const a = year % 19, b = Math.floor(year / 100), c = year % 100;
+  const d = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3), h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4), k = c % 4, l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor((h + l - 7 * m + 114) / 31);
+  const day = ((h + l - 7 * m + 114) % 31) + 1;
+  return new Date(year, month - 1, day);
+}
+
+const _holidayCache = {};
+function holidaysNds(year) {
+  // Gesetzliche Feiertage in Niedersachsen: ISO-Datum -> Name
+  if (_holidayCache[year]) return _holidayCache[year];
+  const easter = easterSunday(year);
+  const rel = (days) => { const d = new Date(easter); d.setDate(d.getDate() + days); return isoFromDate(d); };
+  const map = {
+    [`${year}-01-01`]: 'Neujahr',
+    [rel(-2)]: 'Karfreitag',
+    [rel(1)]: 'Ostermontag',
+    [`${year}-05-01`]: 'Tag der Arbeit',
+    [rel(39)]: 'Christi Himmelfahrt',
+    [rel(50)]: 'Pfingstmontag',
+    [`${year}-10-03`]: 'Tag der Deutschen Einheit',
+    [`${year}-10-31`]: 'Reformationstag',
+    [`${year}-12-25`]: '1. Weihnachtstag',
+    [`${year}-12-26`]: '2. Weihnachtstag'
+  };
+  _holidayCache[year] = map;
+  return map;
+}
+
+function holidayName(iso) { return holidaysNds(parseInt(iso.slice(0, 4), 10))[iso] || null; }
+
+function isoWeekMonday(iso) {
+  const d = new Date(iso + 'T00:00:00');
+  const dow = (d.getDay() + 6) % 7; // Mo=0 … So=6
+  d.setDate(d.getDate() - dow);
+  return isoFromDate(d);
+}
+
+function isoWeekNumber(iso) {
+  const d = new Date(iso + 'T00:00:00');
+  d.setDate(d.getDate() + 3 - ((d.getDay() + 6) % 7)); // Donnerstag derselben Woche
+  const jan4 = new Date(d.getFullYear(), 0, 4);
+  return 1 + Math.round(((d - jan4) / 86400000 - 3 + ((jan4.getDay() + 6) % 7)) / 7);
+}
+
+// Liefert für einen Zeitraum die Urlaubs-Blöcke: pro Kalenderwoche (und zusätzlich
+// getrennt am Monatswechsel, da der Stundenzettel pro Monat ein eigenes Blatt hat)
+// ein Block mit allen Werktagen Mo–Fr, die keine Feiertage sind.
+function computeVacationChunks(fromISO, toISO) {
+  const chunks = [];
+  const skippedHolidays = [];
+  if (!fromISO || !toISO || toISO < fromISO) return { chunks, skippedHolidays };
+  let cur = fromISO;
+  let chunk = null;
+  let guard = 0;
+  while (cur <= toISO && guard++ < 800) {
+    const dow = new Date(cur + 'T00:00:00').getDay();
+    const isWeekday = dow >= 1 && dow <= 5;
+    const hol = isWeekday ? holidayName(cur) : null;
+    if (hol) skippedHolidays.push({ date: cur, name: hol });
+    if (isWeekday && !hol) {
+      const key = isoWeekMonday(cur) + '|' + monthKey(cur);
+      if (!chunk || chunk.key !== key) {
+        chunk = { key, start: cur, end: cur, days: [] };
+        chunks.push(chunk);
+      }
+      chunk.end = cur;
+      chunk.days.push(cur);
+    }
+    cur = shiftDateISO(cur, 1);
+  }
+  return { chunks, skippedHolidays };
+}
+
+function vacationDesc(start, end, n) {
+  const range = start === end ? formatDateLong(start) : `${formatDateLong(start)} – ${formatDateLong(end)}`;
+  return `Urlaub ${range} (${n} ${n === 1 ? 'Tag' : 'Tage'} à ${URLAUB_STUNDEN_PRO_TAG} Std)`;
+}
+
+function buildVacationEntry(chunk, blockId) {
+  const n = chunk.days.length;
+  return {
+    id: uid(),
+    type: 'urlaub',
+    blockId,
+    date: chunk.start,
+    dateEnd: chunk.end,
+    days: n,
+    customer: 'Urlaub',
+    address: '',
+    desc: vacationDesc(chunk.start, chunk.end, n),
+    aufmass: 'keins',
+    timeMode: 'duration',
+    durationHours: n * URLAUB_STUNDEN_PRO_TAG,
+    breakMinutes: 0
+  };
+}
+
+function allVacationEntries() {
+  return [...state.entries, ...state.archive.flatMap(b => b.entries)].filter(isVacation);
+}
+
+function overlappingVacationDays(days, excludeId = null) {
+  const daySet = new Set(days);
+  const hits = [];
+  allVacationEntries().forEach(e => {
+    if (e.id === excludeId) return;
+    let d = e.date;
+    while (d <= (e.dateEnd || e.date)) { if (daySet.has(d)) hits.push(d); d = shiftDateISO(d, 1); }
+  });
+  return [...new Set(hits)].sort();
+}
+
+function entryDateLabel(e, long = false) {
+  if (isVacation(e) && e.dateEnd && e.dateEnd !== e.date) {
+    return long ? `${formatDateLong(e.date)} – ${formatDateLong(e.dateEnd)}` : `${formatDateShort(e.date)}–${formatDateShort(e.dateEnd)}`;
+  }
+  return long ? formatDateLong(e.date) : formatDateShort(e.date);
+}
+
+function entryTimeLabel(e) {
+  if (isVacation(e)) return `${e.days} ${e.days === 1 ? 'Urlaubstag' : 'Urlaubstage'} × ${URLAUB_STUNDEN_PRO_TAG} Std`;
+  return e.timeMode === 'range' ? `${e.start}–${e.end}` : `${formatHoursDE(e.durationHours)} Std`;
+}
+
 // ---------- Klartext-Erfassung (Freitext-Parser) ----------
 
 // Deutsche Zahlwörter 0–59, für den Fall, dass die Diktierfunktion Zeiten/Minuten
@@ -529,7 +665,106 @@ function initForm() {
     e.target.value = '';
   });
 
+  initVacationForm();
   updateComputedHint();
+}
+
+// ---------- Urlaub erfassen ----------
+
+function initVacationForm() {
+  $('v-from').addEventListener('change', () => {
+    if (!$('v-to').value || $('v-to').value < $('v-from').value) $('v-to').value = $('v-from').value;
+    renderVacationPreview();
+  });
+  $('v-to').addEventListener('change', renderVacationPreview);
+  $('saveVacationBtn').addEventListener('click', saveVacation);
+  renderVacationPreview();
+}
+
+function renderVacationPreview() {
+  const from = $('v-from').value, to = $('v-to').value;
+  const box = $('vacationPreview');
+  if (!from || !to) { box.innerHTML = '<div class="hint">Zeitraum wählen (erster und letzter Urlaubstag).</div>'; return; }
+  if (to < from) { box.innerHTML = '<div class="hint" style="color:var(--red)">„Bis“ liegt vor „Von“.</div>'; return; }
+  const { chunks, skippedHolidays } = computeVacationChunks(from, to);
+  const totalDays = chunks.reduce((s, c) => s + c.days.length, 0);
+  if (!chunks.length) { box.innerHTML = '<div class="hint">Im gewählten Zeitraum liegen keine Werktage.</div>'; return; }
+  let html = '<div class="vac-preview">';
+  chunks.forEach(c => {
+    const range = c.start === c.end ? formatDateLong(c.start) : `${formatDateLong(c.start)} – ${formatDateLong(c.end)}`;
+    html += `<div class="vac-row"><span>KW ${isoWeekNumber(c.start)}: ${range}</span><span>${c.days.length} T · ${c.days.length * URLAUB_STUNDEN_PRO_TAG} Std</span></div>`;
+  });
+  html += `<div class="vac-row vac-total"><span>Gesamt: ${totalDays} ${totalDays === 1 ? 'Urlaubstag' : 'Urlaubstage'}</span><span>${totalDays * URLAUB_STUNDEN_PRO_TAG} Std</span></div>`;
+  if (skippedHolidays.length) {
+    html += `<div class="hint">Feiertage nicht mitgezählt: ${skippedHolidays.map(h => `${formatDateShort(h.date)} ${h.name}`).join(', ')}</div>`;
+  }
+  const overlap = overlappingVacationDays(chunks.flatMap(c => c.days));
+  if (overlap.length) {
+    html += `<div class="hint" style="color:var(--red)">Achtung: Für ${overlap.length} dieser Tage ist bereits Urlaub eingetragen (${overlap.map(formatDateShort).join(', ')}).</div>`;
+  }
+  html += '</div>';
+  box.innerHTML = html;
+}
+
+function saveVacation() {
+  const from = $('v-from').value, to = $('v-to').value;
+  if (!from || !to) { showToast('Bitte Von- und Bis-Datum wählen.'); return; }
+  if (to < from) { showToast('„Bis“ liegt vor „Von“.'); return; }
+  const { chunks } = computeVacationChunks(from, to);
+  if (!chunks.length) { showToast('Im Zeitraum liegen keine Werktage.'); return; }
+  const overlap = overlappingVacationDays(chunks.flatMap(c => c.days));
+  if (overlap.length && !confirm(`Für ${overlap.length} Tag(e) ist bereits Urlaub eingetragen (${overlap.map(formatDateShort).join(', ')}). Trotzdem zusätzlich eintragen?`)) return;
+  const blockId = uid();
+  chunks.forEach(c => state.entries.push(buildVacationEntry(c, blockId)));
+  saveState();
+  renderEntries();
+  const totalDays = chunks.reduce((s, c) => s + c.days.length, 0);
+  showToast(`Urlaub eingetragen: ${totalDays} Tage in ${chunks.length} ${chunks.length === 1 ? 'Eintrag' : 'Einträgen'}.`);
+  $('v-from').value = ''; $('v-to').value = '';
+  renderVacationPreview();
+}
+
+function openVacationEditModal(e) {
+  const modal = $('editModal');
+  modal.innerHTML = `
+    <h3>Urlaubseintrag bearbeiten</h3>
+    <div class="hint" style="margin-top:0;">Wochenenden und Feiertage werden automatisch ausgelassen. Der Eintrag muss innerhalb einer Woche und eines Monats bleiben — für längere Zeiträume bitte unter „Urlaub“ neu eintragen.</div>
+    <div class="row">
+      <div><label>Von</label><input type="date" id="mv-from" value="${e.date}"></div>
+      <div><label>Bis</label><input type="date" id="mv-to" value="${e.dateEnd || e.date}"></div>
+    </div>
+    <div class="hint" id="mv-hint" style="margin-top:10px;"></div>
+    <div class="btn-block-row" style="margin-top:16px;">
+      <button class="btn btn-secondary" id="m-cancel">Abbrechen</button>
+      <button class="btn btn-primary" id="m-save">Speichern</button>
+    </div>`;
+  const calc = () => {
+    const from = modal.querySelector('#mv-from').value, to = modal.querySelector('#mv-to').value;
+    const res = computeVacationChunks(from, to);
+    let err = null;
+    if (!from || !to || to < from) err = 'Bitte gültigen Zeitraum wählen.';
+    else if (!res.chunks.length) err = 'Im Zeitraum liegen keine Werktage.';
+    else if (res.chunks.length > 1) err = 'Zeitraum geht über eine Woche bzw. einen Monatswechsel hinaus.';
+    modal.querySelector('#mv-hint').innerHTML = err
+      ? `<span style="color:var(--red)">${err}</span>`
+      : `→ ${res.chunks[0].days.length} ${res.chunks[0].days.length === 1 ? 'Tag' : 'Tage'} · ${res.chunks[0].days.length * URLAUB_STUNDEN_PRO_TAG} Std`;
+    return err ? null : res.chunks[0];
+  };
+  modal.querySelector('#mv-from').addEventListener('change', calc);
+  modal.querySelector('#mv-to').addEventListener('change', calc);
+  calc();
+  modal.querySelector('#m-cancel').addEventListener('click', closeEditModal);
+  modal.querySelector('#m-save').addEventListener('click', () => {
+    const chunk = calc();
+    if (!chunk) { showToast('Bitte Zeitraum korrigieren.'); return; }
+    const updated = buildVacationEntry(chunk, e.blockId);
+    Object.assign(e, updated, { id: e.id });
+    saveState();
+    renderEntries();
+    closeEditModal();
+    showToast('Urlaubseintrag aktualisiert.');
+  });
+  $('editModalBackdrop').classList.add('show');
 }
 
 function updateComputedHint() {
@@ -629,12 +864,17 @@ function refreshCustomerList() {
 // ---------- Eintragsliste ----------
 
 function groupedEntriesByDate() {
+  // Urlaubs-Einträge bilden jeweils eine eigene Gruppe (eigene Zeile mit eigener
+  // "Gesamt"-Summe), damit sie nicht mit Arbeitseinträgen desselben Tages vermischt werden.
   const map = {};
+  const vacGroups = [];
   state.entries.forEach(e => {
+    if (isVacation(e)) { vacGroups.push({ date: e.date, vacation: true, entries: [e] }); return; }
     if (!map[e.date]) map[e.date] = [];
     map[e.date].push(e);
   });
-  return Object.keys(map).sort().map(date => ({ date, entries: map[date] }));
+  const groups = Object.keys(map).map(date => ({ date, entries: map[date] })).concat(vacGroups);
+  return groups.sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : (a.vacation ? -1 : 0) - (b.vacation ? -1 : 0));
 }
 
 function dailyTotalHours(entries) {
@@ -654,13 +894,14 @@ function renderEntries() {
     const total = dailyTotalHours(g.entries);
     const gDiv = document.createElement('div');
     gDiv.className = 'entry-group';
-    gDiv.innerHTML = `<div class="entry-group-date"><span>${formatDateLong(g.date)}</span><span class="total">Gesamt: ${formatHoursDE(total)} Std</span></div>`;
+    const groupLabel = g.vacation ? '🏖️ ' + entryDateLabel(g.entries[0], true) : formatDateLong(g.date);
+    gDiv.innerHTML = `<div class="entry-group-date"><span>${groupLabel}</span><span class="total">Gesamt: ${formatHoursDE(total)} Std</span></div>`;
     const list = document.createElement('div');
     g.entries.forEach(e => {
       const mins = computeNetMinutes(e);
-      const timeLabel = e.timeMode === 'range' ? `${e.start}–${e.end}` : `${formatHoursDE(e.durationHours)} Std`;
+      const timeLabel = entryTimeLabel(e);
       const item = document.createElement('div');
-      item.className = 'entry-item';
+      item.className = 'entry-item' + (isVacation(e) ? ' vacation' : '');
       item.innerHTML = `
         <div class="info">
           <div class="customer">${escapeHtml(e.customer)} ${e.aufmass === 'ja' ? '<span class="badge">Aufmaß</span>' : ''}</div>
@@ -671,7 +912,7 @@ function renderEntries() {
           <button class="icon-btn edit" title="Bearbeiten">✏️</button>
           <button class="icon-btn del" title="Löschen">🗑️</button>
         </div>`;
-      item.querySelector('.edit').addEventListener('click', () => openEditModal(e.id));
+      item.querySelector('.edit').addEventListener('click', () => isVacation(e) ? openVacationEditModal(e) : openEditModal(e.id));
       item.querySelector('.del').addEventListener('click', () => deleteEntry(e.id));
       list.appendChild(item);
     });
@@ -989,7 +1230,7 @@ async function exportPdf() {
   // Dateiname enthält den tatsächlichen Datumsbereich der exportierten Einträge
   // (Stundenzettel_Name_Von_Bis.pdf bzw. nur ein Datum, wenn alles an einem Tag war)
   // statt des Datums, an dem exportiert wurde.
-  const exportDates = [...new Set(state.entries.map(e => e.date))].sort();
+  const exportDates = [...new Set(state.entries.flatMap(e => isVacation(e) && e.dateEnd ? [e.date, e.dateEnd] : [e.date]))].sort();
   const rangeLabel = exportDates.length
     ? (exportDates[0] === exportDates[exportDates.length - 1]
         ? formatDateFileDE(exportDates[0])
@@ -1108,16 +1349,21 @@ function renderArchiveMonthView() {
       listEl.innerHTML = '<div class="empty-state">Keine archivierten Einträge in diesem Monat.</div>';
     } else {
       const byDate = {};
-      matches.forEach(mm => { (byDate[mm.entry.date] = byDate[mm.entry.date] || []).push(mm); });
-      Object.keys(byDate).sort().forEach(date => {
-        const dayTotal = byDate[date].reduce((s, mm) => s + minutesToHoursDecimal(computeNetMinutes(mm.entry)), 0);
+      matches.forEach(mm => {
+        const key = isVacation(mm.entry) ? `${mm.entry.date}~u${mm.entry.id}` : mm.entry.date; // Urlaub = eigene Gruppe
+        (byDate[key] = byDate[key] || []).push(mm);
+      });
+      Object.keys(byDate).sort().forEach(key => {
+        const first = byDate[key][0].entry;
+        const dayTotal = byDate[key].reduce((s, mm) => s + minutesToHoursDecimal(computeNetMinutes(mm.entry)), 0);
         const gDiv = document.createElement('div');
         gDiv.className = 'entry-group';
-        gDiv.innerHTML = `<div class="entry-group-date"><span>${formatDateLong(date)}</span><span class="total">Gesamt: ${formatHoursDE(dayTotal)} Std</span></div>`;
+        const label = isVacation(first) ? '🏖️ ' + entryDateLabel(first, true) : formatDateLong(first.date);
+        gDiv.innerHTML = `<div class="entry-group-date"><span>${label}</span><span class="total">Gesamt: ${formatHoursDE(dayTotal)} Std</span></div>`;
         const list = document.createElement('div');
-        byDate[date].forEach(({ entry: e, batchId }) => {
+        byDate[key].forEach(({ entry: e, batchId }) => {
           const mins = computeNetMinutes(e);
-          const timeLabel = e.timeMode === 'range' ? `${e.start}–${e.end}` : `${formatHoursDE(e.durationHours)} Std`;
+          const timeLabel = entryTimeLabel(e);
           const item = document.createElement('div');
           item.className = 'entry-item';
           item.innerHTML = `
@@ -1178,7 +1424,7 @@ function renderArchive() {
     const details = document.createElement('details');
     details.className = 'archive-batch';
     const dateRange = batch.entries.length
-      ? [...new Set(batch.entries.map(e => e.date))].sort()
+      ? [...new Set(batch.entries.flatMap(e => isVacation(e) && e.dateEnd ? [e.date, e.dateEnd] : [e.date]))].sort()
       : [];
     const rangeLabel = dateRange.length ? `${formatDateShort(dateRange[0])} – ${formatDateShort(dateRange[dateRange.length-1])}` : '';
     details.innerHTML = `
@@ -1195,12 +1441,12 @@ function renderArchive() {
     const listEl = details.querySelector('.archive-entry-list');
     batch.entries.forEach(e => {
       const mins = computeNetMinutes(e);
-      const timeLabel = e.timeMode === 'range' ? `${e.start}–${e.end}` : `${formatHoursDE(e.durationHours)} Std`;
+      const timeLabel = entryTimeLabel(e);
       const item = document.createElement('div');
       item.className = 'entry-item';
       item.innerHTML = `
         <div class="info">
-          <div class="customer">${formatDateShort(e.date)} · ${escapeHtml(e.customer)} ${e.aufmass === 'ja' ? '<span class="badge">Aufmaß</span>' : ''}</div>
+          <div class="customer">${entryDateLabel(e)} · ${escapeHtml(e.customer)} ${e.aufmass === 'ja' ? '<span class="badge">Aufmaß</span>' : ''}</div>
           <div class="desc">${escapeHtml(e.desc)}</div>
           <div class="meta">${timeLabel}${e.breakMinutes ? ` · ${e.breakMinutes} Min Pause` : ''} · ${formatHoursDE(minutesToHoursDecimal(mins))} Std</div>
         </div>
@@ -1248,9 +1494,14 @@ function drawEntryRow(page, font, row, entry, dailyTotalHours_, isLastOfDay) {
   const size = 10.5;
   const c = TEMPLATE.cols;
 
-  // Datum (einzeilig, vertikal zentriert)
-  const datumY = topToPdfY((row.top + row.bottom) / 2 - 3.5);
-  page.drawText(formatDateShort(entry.date), { x: c.datum.x0 + TEMPLATE.padLeft, y: datumY, size, font });
+  // Datum (einzeilig, vertikal zentriert) — bei Urlaub über mehrere Tage zweizeilig "von –" / "bis"
+  if (isVacation(entry) && entry.dateEnd && entry.dateEnd !== entry.date) {
+    page.drawText(formatDateShort(entry.date) + ' –', { x: c.datum.x0 + TEMPLATE.padLeft, y: topToPdfY(row.mid - 4), size, font });
+    page.drawText(formatDateShort(entry.dateEnd), { x: c.datum.x0 + TEMPLATE.padLeft, y: topToPdfY(row.bottom - 4), size, font });
+  } else {
+    const datumY = topToPdfY((row.top + row.bottom) / 2 - 3.5);
+    page.drawText(formatDateShort(entry.date), { x: c.datum.x0 + TEMPLATE.padLeft, y: datumY, size, font });
+  }
 
   // Kunde: Zeile 1 = Name, Zeile 2 = Adresse (nur eine Zeile Platz -> verkleinern, dann kürzen)
   const kundeMaxW = c.kunde.x1 - c.kunde.x0 - TEMPLATE.padLeft * 2;
@@ -1284,7 +1535,8 @@ function drawEntryRow(page, font, row, entry, dailyTotalHours_, isLastOfDay) {
     page.drawText(zg, { x: zgCenterX - zgWidth/2, y: topToPdfY((row.top+row.bottom)/2 - 3.5), size, font });
   }
 
-  // Aufmaß: das zutreffende Kästchen ("Ja"/"Nein") mit einem X markieren
+  // Aufmaß: das zutreffende Kästchen ("Ja"/"Nein") mit einem X markieren (bei Urlaub keins)
+  if (isVacation(entry)) return;
   const boxX0 = entry.aufmass === 'ja' ? TEMPLATE.aufmass.jaX0 : TEMPLATE.aufmass.neinX0;
   const boxX1 = entry.aufmass === 'ja' ? TEMPLATE.aufmass.jaX1 : TEMPLATE.aufmass.neinX1;
   const cyTop = (row.aufmassTop + row.aufmassBottom) / 2;
