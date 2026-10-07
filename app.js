@@ -474,14 +474,14 @@ function setStartSliderHHMM(hhmm) {
   const idx = hhmmToQuarterIndex(hhmm);
   hhmm = hhmm || quarterIndexToHHMM(idx);
   $('f-start').value = idx;
-  $('f-start-label').value = hhmm;
+  setTP($('f-start-label'), hhmm);
 }
 
 function setEndSliderHHMM(hhmm) {
   const idx = hhmmToQuarterIndex(hhmm);
   hhmm = hhmm || quarterIndexToHHMM(idx);
   $('f-end').value = idx;
-  $('f-end-label').value = hhmm;
+  setTP($('f-end-label'), hhmm);
 }
 
 // Verhindert, dass eine Berührung/Klick an einer beliebigen Stelle des Schiebereglers
@@ -516,14 +516,29 @@ function restrictSliderToThumbDrag(inputEl) {
   inputEl.addEventListener('touchstart', guard, { passive: false });
 }
 
-function bindTimeInputToSlider(timeEl, sliderEl, onChange) {
+// Uhrzeit-Anzeige: sichtbarer Text (zuverlässig aktualisierbar, auch auf iOS) plus ein
+// unsichtbares natives Zeitfeld darüber, das beim Antippen den Zeit-Picker öffnet.
+function timePickHtml(id, hhmm) {
+  return `<span class="time-pick" id="${id}"><span class="tp-text time-value">${hhmm}</span><input type="time" value="${hhmm}" aria-label="Uhrzeit direkt eingeben"></span>`;
+}
+function getTP(wrap) { return wrap.querySelector('.tp-text').textContent.trim(); }
+function setTP(wrap, hhmm) {
+  wrap.querySelector('.tp-text').textContent = hhmm;
+  const inp = wrap.querySelector('input');
+  if (inp.value !== hhmm) inp.value = hhmm;
+}
+
+function bindTimeInputToSlider(wrap, sliderEl, onChange) {
+  const inp = wrap.querySelector('input');
   const sync = () => {
-    if (!/^\d{1,2}:\d{2}/.test(timeEl.value)) return;
-    sliderEl.value = hhmmToQuarterIndex(timeEl.value.slice(0, 5));
+    if (!/^\d{1,2}:\d{2}/.test(inp.value)) return;
+    const hhmm = inp.value.slice(0, 5);
+    wrap.querySelector('.tp-text').textContent = hhmm;
+    sliderEl.value = hhmmToQuarterIndex(hhmm);
     if (onChange) onChange();
   };
-  timeEl.addEventListener('input', sync);
-  timeEl.addEventListener('change', sync);
+  inp.addEventListener('input', sync);
+  inp.addEventListener('change', sync);
 }
 
 // Sorgt dafür, dass "Von" nie gleich oder später als "Bis" stehen kann (und umgekehrt),
@@ -579,7 +594,7 @@ function initForm() {
     if (!btn) return;
     timeMode = btn.dataset.mode;
     document.querySelectorAll('#timeModeSeg button').forEach(b => b.classList.toggle('active', b === btn));
-    $('rangeFields').style.display = timeMode === 'range' ? 'flex' : 'none';
+    $('rangeFields').style.display = timeMode === 'range' ? 'block' : 'none';
     $('durationFields').style.display = timeMode === 'duration' ? 'block' : 'none';
     updateComputedHint();
   });
@@ -614,12 +629,12 @@ function initForm() {
 
   $('f-start').addEventListener('input', () => {
     const { startVal } = clampTimeSliders($('f-start'), $('f-end'), $('f-start'));
-    $('f-start-label').value = quarterIndexToHHMM(startVal);
+    setTP($('f-start-label'), quarterIndexToHHMM(startVal));
     updateComputedHint();
   });
   $('f-end').addEventListener('input', () => {
     const { endVal } = clampTimeSliders($('f-start'), $('f-end'), $('f-end'));
-    $('f-end-label').value = quarterIndexToHHMM(endVal);
+    setTP($('f-end-label'), quarterIndexToHHMM(endVal));
     updateComputedHint();
   });
   // Direkteingabe: Uhrzeit antippen und eintippen/auswählen (minutengenau);
@@ -808,8 +823,8 @@ function readFormAsEntry(preview = false) {
     breakMinutes: breakMinutes || 0
   };
   if (timeMode === 'range') {
-    entry.start = $('f-start-label').value || quarterIndexToHHMM(parseInt($('f-start').value, 10) || 0);
-    entry.end = $('f-end-label').value || quarterIndexToHHMM(parseInt($('f-end').value, 10) || 0);
+    entry.start = getTP($('f-start-label')) || quarterIndexToHHMM(parseInt($('f-start').value, 10) || 0);
+    entry.end = getTP($('f-end-label')) || quarterIndexToHHMM(parseInt($('f-end').value, 10) || 0);
   } else {
     entry.durationHours = parseFloat($('f-duration').value) || 0;
   }
@@ -968,11 +983,11 @@ function openEditModal(id) {
     </div>
     <div id="m-rangeFields" style="margin-top:10px; display:${e.timeMode==='range'?'block':'none'};">
       <div class="time-slider-group">
-        <label>Von <input type="time" class="time-value" id="m-start-label" value="${e.start||'07:30'}"></label>
+        <div class="time-row">Von ${timePickHtml('m-start-label', e.start||'07:30')}</div>
         <input type="range" id="m-start" min="0" max="95" step="1" value="${hhmmToQuarterIndex(e.start||'07:30')}">
       </div>
       <div class="time-slider-group">
-        <label>Bis <input type="time" class="time-value" id="m-end-label" value="${e.end||'16:15'}"></label>
+        <div class="time-row">Bis ${timePickHtml('m-end-label', e.end||'16:15')}</div>
         <input type="range" id="m-end" min="0" max="95" step="1" value="${hhmmToQuarterIndex(e.end||'16:15')}">
       </div>
     </div>
@@ -1005,11 +1020,11 @@ function openEditModal(id) {
   restrictSliderToThumbDrag(mEndEl);
   mStartEl.addEventListener('input', () => {
     const { startVal } = clampTimeSliders(mStartEl, mEndEl, mStartEl);
-    modal.querySelector('#m-start-label').value = quarterIndexToHHMM(startVal);
+    setTP(modal.querySelector('#m-start-label'), quarterIndexToHHMM(startVal));
   });
   mEndEl.addEventListener('input', () => {
     const { endVal } = clampTimeSliders(mStartEl, mEndEl, mEndEl);
-    modal.querySelector('#m-end-label').value = quarterIndexToHHMM(endVal);
+    setTP(modal.querySelector('#m-end-label'), quarterIndexToHHMM(endVal));
   });
   bindTimeInputToSlider(modal.querySelector('#m-start-label'), mStartEl);
   bindTimeInputToSlider(modal.querySelector('#m-end-label'), mEndEl);
@@ -1025,8 +1040,8 @@ function openEditModal(id) {
     e.desc = modal.querySelector('#m-desc').value.trim();
     e.timeMode = mTimeMode;
     if (mTimeMode === 'range') {
-      e.start = modal.querySelector('#m-start-label').value || quarterIndexToHHMM(parseInt(modal.querySelector('#m-start').value, 10));
-      e.end = modal.querySelector('#m-end-label').value || quarterIndexToHHMM(parseInt(modal.querySelector('#m-end').value, 10));
+      e.start = getTP(modal.querySelector('#m-start-label')) || quarterIndexToHHMM(parseInt(modal.querySelector('#m-start').value, 10));
+      e.end = getTP(modal.querySelector('#m-end-label')) || quarterIndexToHHMM(parseInt(modal.querySelector('#m-end').value, 10));
     } else {
       e.durationHours = parseFloat(modal.querySelector('#m-duration').value) || 0;
     }
