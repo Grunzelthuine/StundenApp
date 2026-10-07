@@ -472,14 +472,16 @@ function lastEndTimeForDate(dateISO) {
 
 function setStartSliderHHMM(hhmm) {
   const idx = hhmmToQuarterIndex(hhmm);
+  hhmm = hhmm || quarterIndexToHHMM(idx);
   $('f-start').value = idx;
-  $('f-start-label').textContent = quarterIndexToHHMM(idx);
+  $('f-start-label').value = hhmm;
 }
 
 function setEndSliderHHMM(hhmm) {
   const idx = hhmmToQuarterIndex(hhmm);
+  hhmm = hhmm || quarterIndexToHHMM(idx);
   $('f-end').value = idx;
-  $('f-end-label').textContent = quarterIndexToHHMM(idx);
+  $('f-end-label').value = hhmm;
 }
 
 // Verhindert, dass eine Berührung/Klick an einer beliebigen Stelle des Schiebereglers
@@ -512,6 +514,16 @@ function restrictSliderToThumbDrag(inputEl) {
   };
   inputEl.addEventListener('pointerdown', guard, { passive: false });
   inputEl.addEventListener('touchstart', guard, { passive: false });
+}
+
+function bindTimeInputToSlider(timeEl, sliderEl, onChange) {
+  const sync = () => {
+    if (!/^\d{1,2}:\d{2}/.test(timeEl.value)) return;
+    sliderEl.value = hhmmToQuarterIndex(timeEl.value.slice(0, 5));
+    if (onChange) onChange();
+  };
+  timeEl.addEventListener('input', sync);
+  timeEl.addEventListener('change', sync);
 }
 
 // Sorgt dafür, dass "Von" nie gleich oder später als "Bis" stehen kann (und umgekehrt),
@@ -602,14 +614,18 @@ function initForm() {
 
   $('f-start').addEventListener('input', () => {
     const { startVal } = clampTimeSliders($('f-start'), $('f-end'), $('f-start'));
-    $('f-start-label').textContent = quarterIndexToHHMM(startVal);
+    $('f-start-label').value = quarterIndexToHHMM(startVal);
     updateComputedHint();
   });
   $('f-end').addEventListener('input', () => {
     const { endVal } = clampTimeSliders($('f-start'), $('f-end'), $('f-end'));
-    $('f-end-label').textContent = quarterIndexToHHMM(endVal);
+    $('f-end-label').value = quarterIndexToHHMM(endVal);
     updateComputedHint();
   });
+  // Direkteingabe: Uhrzeit antippen und eintippen/auswählen (minutengenau);
+  // der Schieberegler springt auf die nächstliegende Viertelstunde mit.
+  bindTimeInputToSlider($('f-start-label'), $('f-start'), updateComputedHint);
+  bindTimeInputToSlider($('f-end-label'), $('f-end'), updateComputedHint);
   $('f-duration').addEventListener('input', updateComputedHint);
 
   $('f-customer').addEventListener('input', () => {
@@ -792,8 +808,8 @@ function readFormAsEntry(preview = false) {
     breakMinutes: breakMinutes || 0
   };
   if (timeMode === 'range') {
-    entry.start = quarterIndexToHHMM(parseInt($('f-start').value, 10) || 0);
-    entry.end = quarterIndexToHHMM(parseInt($('f-end').value, 10) || 0);
+    entry.start = $('f-start-label').value || quarterIndexToHHMM(parseInt($('f-start').value, 10) || 0);
+    entry.end = $('f-end-label').value || quarterIndexToHHMM(parseInt($('f-end').value, 10) || 0);
   } else {
     entry.durationHours = parseFloat($('f-duration').value) || 0;
   }
@@ -829,6 +845,7 @@ function saveEntry() {
 function resetEntryFormFields() {
   // Datum bleibt stehen (für weitere Einträge am selben Tag), alle anderen Felder werden geleert
   $('f-freetext').value = '';
+  $('freetextBox').open = false;
   $('f-customer').value = '';
   $('f-customer-address').value = '';
   $('newCustomerBox').style.display = 'none';
@@ -951,11 +968,11 @@ function openEditModal(id) {
     </div>
     <div id="m-rangeFields" style="margin-top:10px; display:${e.timeMode==='range'?'block':'none'};">
       <div class="time-slider-group">
-        <label>Von <span class="time-value" id="m-start-label">${e.start||'07:30'}</span></label>
+        <label>Von <input type="time" class="time-value" id="m-start-label" value="${e.start||'07:30'}"></label>
         <input type="range" id="m-start" min="0" max="95" step="1" value="${hhmmToQuarterIndex(e.start||'07:30')}">
       </div>
       <div class="time-slider-group">
-        <label>Bis <span class="time-value" id="m-end-label">${e.end||'16:15'}</span></label>
+        <label>Bis <input type="time" class="time-value" id="m-end-label" value="${e.end||'16:15'}"></label>
         <input type="range" id="m-end" min="0" max="95" step="1" value="${hhmmToQuarterIndex(e.end||'16:15')}">
       </div>
     </div>
@@ -988,12 +1005,14 @@ function openEditModal(id) {
   restrictSliderToThumbDrag(mEndEl);
   mStartEl.addEventListener('input', () => {
     const { startVal } = clampTimeSliders(mStartEl, mEndEl, mStartEl);
-    modal.querySelector('#m-start-label').textContent = quarterIndexToHHMM(startVal);
+    modal.querySelector('#m-start-label').value = quarterIndexToHHMM(startVal);
   });
   mEndEl.addEventListener('input', () => {
     const { endVal } = clampTimeSliders(mStartEl, mEndEl, mEndEl);
-    modal.querySelector('#m-end-label').textContent = quarterIndexToHHMM(endVal);
+    modal.querySelector('#m-end-label').value = quarterIndexToHHMM(endVal);
   });
+  bindTimeInputToSlider(modal.querySelector('#m-start-label'), mStartEl);
+  bindTimeInputToSlider(modal.querySelector('#m-end-label'), mEndEl);
   modal.querySelector('#m-aufmassSeg').addEventListener('click', (ev) => {
     const btn = ev.target.closest('button[data-aufmass]'); if (!btn) return;
     mAufmass = btn.dataset.aufmass;
@@ -1006,8 +1025,8 @@ function openEditModal(id) {
     e.desc = modal.querySelector('#m-desc').value.trim();
     e.timeMode = mTimeMode;
     if (mTimeMode === 'range') {
-      e.start = quarterIndexToHHMM(parseInt(modal.querySelector('#m-start').value, 10));
-      e.end = quarterIndexToHHMM(parseInt(modal.querySelector('#m-end').value, 10));
+      e.start = modal.querySelector('#m-start-label').value || quarterIndexToHHMM(parseInt(modal.querySelector('#m-start').value, 10));
+      e.end = modal.querySelector('#m-end-label').value || quarterIndexToHHMM(parseInt(modal.querySelector('#m-end').value, 10));
     } else {
       e.durationHours = parseFloat(modal.querySelector('#m-duration').value) || 0;
     }

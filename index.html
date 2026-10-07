@@ -51,6 +51,11 @@
   .time-slider-group:first-child{margin-top:0;}
   .time-slider-group label{display:flex; justify-content:space-between; align-items:baseline; margin-bottom:6px;}
   .time-value{font-size:16px; font-weight:700; color:var(--blue-dark);}
+  input[type=time].time-value{
+    width:auto; min-width:96px; padding:6px 10px; border:1.5px solid var(--line); border-radius:8px;
+    background:#f5f8fc; text-align:center; font-family:inherit; cursor:pointer;
+  }
+  .time-slider-group label{align-items:center !important;}
   input[type=range]{
     width:100%; height:34px; -webkit-appearance:none; appearance:none; background:transparent; margin:0;
     touch-action:none;
@@ -144,6 +149,13 @@
   .archive-section > summary::after{content:"▾"; color:var(--muted); font-weight:400; margin-left:auto; padding-left:8px;}
   .archive-section[open] > summary::after{content:"▴";}
   .archive-section-body{padding:0 14px 14px;}
+  .dictate-box{margin-bottom:4px;}
+  .dictate-box > summary{list-style:none; cursor:pointer; display:inline-flex; align-items:center; gap:6px;
+    font-size:13px; color:var(--blue); padding:6px 12px; border:1.5px solid var(--line); border-radius:20px; background:#fff;}
+  .dictate-box > summary::-webkit-details-marker{display:none;}
+  .dictate-box > summary::after{content:"▾"; color:var(--muted);}
+  .dictate-box[open] > summary::after{content:"▴";}
+  .dictate-box[open] > summary{margin-bottom:8px;}
   .vac-card > summary{list-style:none; cursor:pointer; display:flex; align-items:center;}
   .vac-card > summary::-webkit-details-marker{display:none;}
   .vac-card > summary::after{content:"▾"; color:var(--muted); margin-left:auto; padding-left:8px;}
@@ -174,10 +186,11 @@
   <div class="card">
     <h2>Neuer Eintrag</h2>
 
-    <label for="f-freetext">Klartext-Erfassung (optional)</label>
-    <textarea id="f-freetext" rows="3" placeholder="z. B. „Ich war heute von 7:30 bis 15:30 bei Familie Müller und habe Lampen installiert. Dabei habe ich 45 Minuten Pause gemacht.“"></textarea>
-    <div class="hint">Antippen, über die Mikrofon-Taste der Tastatur diktieren, dann „Satz analysieren“ tippen — die Felder unten werden automatisch ausgefüllt. Bitte danach kurz prüfen und bei Bedarf korrigieren, bevor du speicherst. Alternativ die Felder unten auch einfach einzeln ausfüllen.</div>
-    <button type="button" class="btn btn-secondary" id="parseFreeTextBtn">Satz analysieren</button>
+    <details class="dictate-box" id="freetextBox">
+      <summary>🎤 Per Satz erfassen</summary>
+      <textarea id="f-freetext" rows="3" placeholder="z. B. „Ich war heute von 7:30 bis 15:30 bei Müller und habe Lampen installiert, 45 Minuten Pause.“"></textarea>
+      <button type="button" class="btn btn-secondary" id="parseFreeTextBtn" style="margin-top:8px; padding:10px;">Satz analysieren</button>
+    </details>
 
     <label for="f-date">Datum</label>
     <div class="date-nav">
@@ -200,7 +213,6 @@
 
     <label for="f-desc">Arbeitsbeschreibung</label>
     <textarea id="f-desc" rows="2" placeholder="Antippen und über die Mikrofon-Taste der Tastatur diktieren …"></textarea>
-    <div class="hint">Tipp: Auf das Feld tippen, dann die Diktierfunktion der Tastatur (Mikrofon-Taste) verwenden.</div>
 
     <label>Zeit</label>
     <div class="segmented" id="timeModeSeg">
@@ -210,14 +222,14 @@
 
     <div id="rangeFields" style="margin-top:10px;">
       <div class="time-slider-group">
-        <label for="f-start">Von <span class="time-value" id="f-start-label">07:30</span></label>
+        <label>Von <input type="time" class="time-value" id="f-start-label" value="07:30" aria-label="Von-Uhrzeit direkt eingeben"></label>
         <input type="range" id="f-start" min="0" max="95" step="1" value="30">
       </div>
       <div class="time-slider-group">
-        <label for="f-end">Bis <span class="time-value" id="f-end-label">16:15</span></label>
+        <label>Bis <input type="time" class="time-value" id="f-end-label" value="16:15" aria-label="Bis-Uhrzeit direkt eingeben"></label>
         <input type="range" id="f-end" min="0" max="95" step="1" value="65">
       </div>
-      <div class="hint">Schritte von 15 Minuten.</div>
+      <div class="hint">Schieber in 15-Minuten-Schritten — oder auf die Uhrzeit tippen und direkt eingeben (minutengenau).</div>
     </div>
     <div id="durationFields" style="display:none; margin-top:10px;">
       <label for="f-duration">Stunden</label>
