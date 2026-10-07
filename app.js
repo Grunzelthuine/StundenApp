@@ -518,6 +518,46 @@ function restrictSliderToThumbDrag(inputEl) {
 
 // Uhrzeit-Anzeige: sichtbarer Text (zuverlässig aktualisierbar, auch auf iOS) plus ein
 // unsichtbares natives Zeitfeld darüber, das beim Antippen den Zeit-Picker öffnet.
+// Prüft, dass "Von" vor "Bis" liegt (wie bei den Schiebern).
+function startBeforeEndValidator(otherWrap, isStart) {
+  return (hhmm) => {
+    const other = getTP(otherWrap);
+    if (!other) return null;
+    const ok = isStart ? parseHM(hhmm) < parseHM(other) : parseHM(hhmm) > parseHM(other);
+    return ok ? null : (isStart ? `„Von“ muss vor „Bis“ (${other}) liegen.` : `„Bis“ muss nach „Von“ (${other}) liegen.`);
+  };
+}
+
+// "Von" später als (oder gleich) "Bis" -> "Bis" wandert mit und behält die bisherige Dauer
+// (z. B. 08:00–12:00, Von auf 13:00 -> 13:00–17:00). Begrenzt auf 23:59.
+function startPushesEndValidator(startWrap, endWrap, endSlider) {
+  return (hhmm) => {
+    const newStart = parseHM(hhmm);
+    const end = parseHM(getTP(endWrap));
+    if (newStart < end) return null;
+    if (newStart >= 23 * 60 + 59) return '„Von“ muss vor 23:59 liegen.';
+    const oldDur = end - parseHM(getTP(startWrap));
+    const newEnd = Math.min(23 * 60 + 59, newStart + Math.max(15, oldDur));
+    const newEndHHMM = `${String(Math.floor(newEnd / 60)).padStart(2, '0')}:${String(newEnd % 60).padStart(2, '0')}`;
+    setTP(endWrap, newEndHHMM);
+    endSlider.value = hhmmToQuarterIndex(newEndHHMM);
+    return null;
+  };
+}
+
+// Schieber "Von" über "Bis" hinaus -> "Bis" wird eine Viertelstunde dahinter mitgeschoben.
+function onStartSliderInput(startEl, endEl, startWrap, endWrap) {
+  let startVal = parseInt(startEl.value, 10);
+  if (startVal >= QUARTER_MAX) { startVal = QUARTER_MAX - 1; startEl.value = startVal; }
+  const startMins = startVal * 15;
+  if (startMins >= parseHM(getTP(endWrap))) {
+    const endVal = startVal + 1;
+    endEl.value = endVal;
+    setTP(endWrap, quarterIndexToHHMM(endVal));
+  }
+  setTP(startWrap, quarterIndexToHHMM(startVal));
+}
+
 function timePickHtml(id, hhmm) {
   return `<span class="time-pick" id="${id}"><span class="tp-text time-value">${hhmm}</span><input type="time" value="${hhmm}" aria-label="Uhrzeit direkt eingeben"></span>`;
 }
@@ -528,11 +568,18 @@ function setTP(wrap, hhmm) {
   if (inp.value !== hhmm) inp.value = hhmm;
 }
 
-function bindTimeInputToSlider(wrap, sliderEl, onChange) {
+// validate(hhmm) liefert eine Fehlermeldung (-> Eingabe wird verworfen) oder null.
+function bindTimeInputToSlider(wrap, sliderEl, onChange, validate) {
   const inp = wrap.querySelector('input');
   const sync = () => {
     if (!/^\d{1,2}:\d{2}/.test(inp.value)) return;
     const hhmm = inp.value.slice(0, 5);
+    const err = validate ? validate(hhmm) : null;
+    if (err) {
+      inp.value = getTP(wrap); // auf den letzten gültigen Wert zurücksetzen
+      showToast(err);
+      return;
+    }
     wrap.querySelector('.tp-text').textContent = hhmm;
     sliderEl.value = hhmmToQuarterIndex(hhmm);
     if (onChange) onChange();
@@ -628,8 +675,7 @@ function initForm() {
   restrictSliderToThumbDrag($('f-end'));
 
   $('f-start').addEventListener('input', () => {
-    const { startVal } = clampTimeSliders($('f-start'), $('f-end'), $('f-start'));
-    setTP($('f-start-label'), quarterIndexToHHMM(startVal));
+    onStartSliderInput($('f-start'), $('f-end'), $('f-start-label'), $('f-end-label'));
     updateComputedHint();
   });
   $('f-end').addEventListener('input', () => {
@@ -639,8 +685,8 @@ function initForm() {
   });
   // Direkteingabe: Uhrzeit antippen und eintippen/auswählen (minutengenau);
   // der Schieberegler springt auf die nächstliegende Viertelstunde mit.
-  bindTimeInputToSlider($('f-start-label'), $('f-start'), updateComputedHint);
-  bindTimeInputToSlider($('f-end-label'), $('f-end'), updateComputedHint);
+  bindTimeInputToSlider($('f-start-label'), $('f-start'), updateComputedHint, startPushesEndValidator($('f-start-label'), $('f-end-label'), $('f-end')));
+  bindTimeInputToSlider($('f-end-label'), $('f-end'), updateComputedHint, startBeforeEndValidator($('f-start-label'), false));
   $('f-duration').addEventListener('input', updateComputedHint);
 
   $('f-customer').addEventListener('input', () => {
@@ -839,6 +885,9 @@ function saveEntry() {
   if (!date) { showToast('Bitte ein Datum wählen.'); return; }
   if (!customer) { showToast('Bitte einen Kunden angeben.'); $('f-customer').focus(); return; }
   if (!desc) { showToast('Bitte eine Arbeitsbeschreibung angeben.'); $('f-desc').focus(); return; }
+  if (timeMode === 'range' && parseHM(getTP($('f-start-label'))) >= parseHM(getTP($('f-end-label')))) {
+    showToast('„Von“ muss vor „Bis“ liegen.'); return;
+  }
   if (timeMode === 'duration' && (!$('f-duration').value || parseFloat($('f-duration').value) <= 0)) {
     showToast('Bitte eine Stundenzahl angeben.'); $('f-duration').focus(); return;
   }
@@ -1019,15 +1068,14 @@ function openEditModal(id) {
   restrictSliderToThumbDrag(mStartEl);
   restrictSliderToThumbDrag(mEndEl);
   mStartEl.addEventListener('input', () => {
-    const { startVal } = clampTimeSliders(mStartEl, mEndEl, mStartEl);
-    setTP(modal.querySelector('#m-start-label'), quarterIndexToHHMM(startVal));
+    onStartSliderInput(mStartEl, mEndEl, modal.querySelector('#m-start-label'), modal.querySelector('#m-end-label'));
   });
   mEndEl.addEventListener('input', () => {
     const { endVal } = clampTimeSliders(mStartEl, mEndEl, mEndEl);
     setTP(modal.querySelector('#m-end-label'), quarterIndexToHHMM(endVal));
   });
-  bindTimeInputToSlider(modal.querySelector('#m-start-label'), mStartEl);
-  bindTimeInputToSlider(modal.querySelector('#m-end-label'), mEndEl);
+  bindTimeInputToSlider(modal.querySelector('#m-start-label'), mStartEl, null, startPushesEndValidator(modal.querySelector('#m-start-label'), modal.querySelector('#m-end-label'), mEndEl));
+  bindTimeInputToSlider(modal.querySelector('#m-end-label'), mEndEl, null, startBeforeEndValidator(modal.querySelector('#m-start-label'), false));
   modal.querySelector('#m-aufmassSeg').addEventListener('click', (ev) => {
     const btn = ev.target.closest('button[data-aufmass]'); if (!btn) return;
     mAufmass = btn.dataset.aufmass;
@@ -1035,6 +1083,9 @@ function openEditModal(id) {
   });
   modal.querySelector('#m-cancel').addEventListener('click', closeEditModal);
   modal.querySelector('#m-save').addEventListener('click', () => {
+    if (mTimeMode === 'range' && parseHM(getTP(modal.querySelector('#m-start-label'))) >= parseHM(getTP(modal.querySelector('#m-end-label')))) {
+      showToast('„Von“ muss vor „Bis“ liegen.'); return;
+    }
     e.date = modal.querySelector('#m-date').value;
     e.customer = modal.querySelector('#m-customer').value.trim();
     e.desc = modal.querySelector('#m-desc').value.trim();
