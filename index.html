@@ -150,6 +150,13 @@
   .archive-section[open] > summary::after{content:"▴";}
   .archive-section-body{padding:0 14px 14px;}
   .dictate-box{margin-bottom:4px;}
+  .hours-total{margin-top:14px; padding:10px 14px; border-radius:12px; background:#eaf1fa; border:1.5px solid #c9d9ee;
+    display:flex; align-items:baseline; justify-content:space-between; gap:10px;}
+  .hours-total:empty{display:none;}
+  .hours-total .ht-label{font-size:13px; color:var(--muted);}
+  .hours-total .ht-value{font-size:26px; font-weight:800; color:var(--blue-dark); white-space:nowrap;}
+  .hours-total .ht-value small{font-size:15px; font-weight:600; margin-left:3px;}
+  .hours-total .ht-sub{display:block; font-size:12px; color:var(--muted); margin-top:2px;}
   .dictate-box > summary{list-style:none; cursor:pointer; display:inline-flex; align-items:center; gap:6px;
     font-size:13px; color:var(--blue); padding:6px 12px; border:1.5px solid var(--line); border-radius:20px; background:#fff;}
   .dictate-box > summary::-webkit-details-marker{display:none;}
@@ -229,12 +236,12 @@
         <div class="time-row">Bis <span class="time-pick" id="f-end-label"><span class="tp-text time-value">16:15</span><input type="time" value="16:15" aria-label="Bis-Uhrzeit direkt eingeben"></span></div>
         <input type="range" id="f-end" min="0" max="95" step="1" value="65">
       </div>
-      <div class="hint">Schieber in 15-Minuten-Schritten — oder auf die Uhrzeit tippen und direkt eingeben (minutengenau).</div>
     </div>
     <div id="durationFields" style="display:none; margin-top:10px;">
       <label for="f-duration">Stunden</label>
       <input type="number" id="f-duration" step="0.25" min="0" placeholder="z. B. 2">
     </div>
+    <div class="hours-total" id="computedHint"></div>
 
     <label>Pause</label>
     <div class="quickbtns" id="breakBtns">
@@ -251,7 +258,6 @@
       <button type="button" data-aufmass="ja">Ja</button>
     </div>
 
-    <div class="hint" id="computedHint" style="margin-top:12px; font-size:13px;"></div>
 
     <button class="btn btn-primary" id="saveEntryBtn">Eintrag speichern</button>
   </div>

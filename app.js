@@ -849,8 +849,8 @@ function updateComputedHint() {
   if (!entry) { $('computedHint').textContent = ''; return; }
   const mins = computeNetMinutes(entry);
   const h = minutesToHoursDecimal(mins);
-  const brk = entry.breakMinutes ? ` (nach Abzug ${entry.breakMinutes} Min Pause)` : '';
-  $('computedHint').textContent = `→ ${formatHoursDE(h)} Std${brk}`;
+  const brk = entry.breakMinutes ? `<span class="ht-sub">nach Abzug von ${entry.breakMinutes} Min Pause</span>` : '';
+  $('computedHint').innerHTML = `<span class="ht-label">Arbeitszeit${brk}</span><span class="ht-value">${formatHoursDE(h)}<small>Std</small></span>`;
 }
 
 function readFormAsEntry(preview = false) {
