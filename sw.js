@@ -1,4 +1,4 @@
-const CACHE_NAME = 'stundenzettel-v22';
+const CACHE_NAME = 'stundenzettel-v23';
 const ASSETS = [
   './',
   './index.html',

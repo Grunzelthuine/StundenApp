@@ -343,7 +343,7 @@
   </div>
 
   <button type="button" class="btn btn-secondary settings-open" id="openSettingsBtn">⚙️ Einstellungen &amp; Sicherung</button>
-  <div class="footer-note">Version 22</div>
+  <div class="footer-note">Version 23</div>
 </main>
 
 <main id="settingsView" style="display:none;">
@@ -368,13 +368,6 @@
     </div>
   </div>
 
-  <div class="card" id="stammCard">
-    <h2>👥 Kundenstamm <span class="badge" id="stammCountBadge">0</span></h2>
-    <div class="hint" style="margin-top:0;">Jeder erfasste Kunde wird hier automatisch angelegt – nach der Anmeldung gemeinsam mit allen Kollegen und der Aufmaß-App. Mit ✏️ lassen sich Name und Adresse ändern.</div>
-    <input type="text" id="stammSearch" placeholder="Kunde oder Adresse suchen …" autocomplete="off" style="margin-top:10px;">
-    <div id="stammList" style="margin-top:10px;"></div>
-  </div>
-
   <div class="card">
     <h2>💾 Datensicherung</h2>
     <div class="hint" style="margin-top:0;">Falls die App auf dem Handy mal neu eingerichtet werden muss (z. B. bei einem Update-Problem): Hier alle Daten (aktive Einträge, Archiv, Kundenliste) als Datei sichern und in der neuen Version wieder einspielen. Beim Einspielen wird nichts überschrieben oder gelöscht — die Sicherung wird zu vorhandenen Einträgen nur hinzugefügt.</div>
@@ -385,7 +378,16 @@
     <input type="file" id="backupImportInput" accept="application/json" style="display:none;">
   </div>
 
-  <div class="footer-note">Einträge bleiben lokal auf diesem Gerät gespeichert. Kundenstamm und Aufmaßnummern werden nach der Anmeldung abgeglichen.<br>Version 22</div>
+  <div class="card" id="stammCard">
+    <details class="vac-card" id="stammDetails">
+      <summary><h2 style="margin:0;">👥 Kundenstamm <span class="badge" id="stammCountBadge">0</span></h2></summary>
+      <div class="hint" style="margin-top:8px;">Jeder erfasste Kunde wird hier automatisch angelegt – nach der Anmeldung gemeinsam mit allen Kollegen und der Aufmaß-App. Mit ✏️ lassen sich Name und Adresse ändern.</div>
+      <input type="text" id="stammSearch" placeholder="Kunde oder Adresse suchen …" autocomplete="off" style="margin-top:10px;">
+      <div id="stammList" style="margin-top:10px;"></div>
+    </details>
+  </div>
+
+  <div class="footer-note">Einträge bleiben lokal auf diesem Gerät gespeichert. Kundenstamm und Aufmaßnummern werden nach der Anmeldung abgeglichen.<br>Version 23</div>
 </main>
 
 <div class="toast" id="toast"></div>
