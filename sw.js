@@ -1,4 +1,4 @@
-const CACHE_NAME = 'stundenzettel-v20';
+const CACHE_NAME = 'stundenzettel-v21';
 const ASSETS = [
   './',
   './index.html',
@@ -11,7 +11,10 @@ const ASSETS = [
   './icons/icon-512.png',
   './vendor/pdf-lib.min.js',
   './vendor/fontkit.umd.min.js',
-  './vendor/patrick-hand.ttf'
+  './vendor/patrick-hand.ttf',
+  './vendor/firebase-app-compat.js',
+  './vendor/firebase-auth-compat.js',
+  './vendor/firebase-firestore-compat.js'
 ];
 
 self.addEventListener('install', (event) => {
@@ -30,6 +33,8 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
+  // Firebase/Google-Anfragen (Anmeldung, Firestore-Datenstrom) nicht anfassen
+  if (new URL(event.request.url).origin !== self.location.origin) return;
   event.respondWith(
     fetch(event.request).then((resp) => {
       try {

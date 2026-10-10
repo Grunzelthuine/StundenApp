@@ -173,6 +173,20 @@
   .vac-total{border-top:1px solid var(--line); margin-top:4px; padding-top:8px; font-weight:700;}
   .vac-total span:last-child{color:var(--blue-dark);}
   .entry-item.vacation{background:#eef6ee; border-color:#cfe5d2;}
+  .cust-wrap{position:relative;}
+  .suggest{position:absolute; left:0; right:0; top:100%; margin-top:4px; background:#fff; border:1.5px solid var(--blue);
+    border-radius:10px; box-shadow:0 6px 18px rgba(0,0,0,.15); z-index:20; max-height:300px; overflow-y:auto; display:none;}
+  .suggest.show{display:block;}
+  .suggest-item{padding:10px 12px; border-bottom:1px solid var(--line); cursor:pointer;}
+  .suggest-item:last-child{border-bottom:none;}
+  .suggest-item:active{background:#eef1f5;}
+  .suggest-item .s-name{font-size:15px; font-weight:600;}
+  .suggest-item .s-addr{font-size:12px; color:var(--muted); margin-top:1px;}
+  .suggest-item.s-new{color:var(--blue); font-weight:600; font-size:14px;}
+  .sync-btn{position:relative;}
+  .sync-dot{position:absolute; right:2px; top:4px; width:10px; height:10px; border-radius:50%; background:#c0392b; border:2px solid var(--blue);}
+  .sync-dot.on{background:#3ddc84;}
+  .link-btn{background:none; border:none; color:var(--blue); font-size:13px; padding:8px 0 0; cursor:pointer;}
 </style>
 </head>
 <body>
@@ -182,7 +196,10 @@
     <h1>Stundenzettel</h1>
     <div class="sub" id="headerSub">Elektro Speckmann GmbH</div>
   </div>
-  <button class="icon-btn" style="color:#fff; font-size:22px;" id="updateBtn" title="App aktualisieren">🔄</button>
+  <div style="display:flex; align-items:center; gap:2px;">
+    <button class="icon-btn sync-btn" style="color:#fff; font-size:22px;" id="syncBtn" title="Anmeldung &amp; Abgleich">☁️<span class="sync-dot" id="syncDot"></span></button>
+    <button class="icon-btn" style="color:#fff; font-size:22px;" id="updateBtn" title="App aktualisieren">🔄</button>
+  </div>
 </header>
 <div class="logo-strip">
   <img src="assets/logo.jpg" alt="Elektro Speckmann GmbH">
@@ -211,8 +228,10 @@
     </div>
 
     <label for="f-customer">Kunde</label>
-    <input type="text" id="f-customer" list="customerList" placeholder="z. B. Müller" autocomplete="off">
-    <datalist id="customerList"></datalist>
+    <div class="cust-wrap">
+      <input type="text" id="f-customer" placeholder="z. B. Müller" autocomplete="off">
+      <div class="suggest" id="customerSuggest"></div>
+    </div>
     <div id="newCustomerBox" style="display:none;">
       <label for="f-customer-address">Adresse (Neukunde) — Straße/Ort, Telefon</label>
       <textarea id="f-customer-address" rows="2" placeholder="z. B. Hauptstraße 1, 49832 Freren, Tel. 0591 123456"></textarea>
@@ -257,6 +276,7 @@
       <button type="button" class="active" data-aufmass="nein">Nein</button>
       <button type="button" data-aufmass="ja">Ja</button>
     </div>
+    <div id="f-nrHost"></div>
 
 
     <button class="btn btn-primary" id="saveEntryBtn">Eintrag speichern</button>
@@ -318,6 +338,31 @@
     </details>
   </div>
 
+  <div class="card" id="syncCard">
+    <h2>☁️ Anmeldung &amp; Abgleich</h2>
+    <div class="hint" id="syncStatus" style="margin-top:0;"></div>
+    <form id="loginForm" autocomplete="on" style="display:none;">
+      <label for="login-email">E-Mail (Konto der Aufmaßsoftware)</label>
+      <input type="email" id="login-email" autocomplete="username" autocapitalize="off" inputmode="email" style="width:100%; padding:11px 12px; border:1.5px solid var(--line); border-radius:10px; font-size:16px;">
+      <label for="login-pw">Passwort</label>
+      <input type="password" id="login-pw" autocomplete="current-password" style="width:100%; padding:11px 12px; border:1.5px solid var(--line); border-radius:10px; font-size:16px;">
+      <button type="submit" class="btn btn-primary" id="loginBtn">Anmelden</button>
+      <button type="button" class="link-btn" id="resetPwBtn">Passwort vergessen?</button>
+    </form>
+    <div id="loggedBox" style="display:none;">
+      <button type="button" class="btn btn-secondary" id="logoutBtn">Abmelden</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <details class="vac-card" id="stammDetails">
+      <summary><h2 style="margin:0;">👥 Kundenstamm <span class="badge" id="stammCountBadge">0</span></h2></summary>
+      <div class="hint" style="margin-top:8px;">Jeder erfasste Kunde wird hier automatisch angelegt – nach der Anmeldung gemeinsam mit allen Kollegen und der Aufmaß-App. Fehlende Adressen kannst du hier oder einfach beim nächsten Eintrag ergänzen.</div>
+      <input type="text" id="stammSearch" placeholder="Kunde oder Adresse suchen …" autocomplete="off" style="margin-top:10px;">
+      <div id="stammList" style="margin-top:10px;"></div>
+    </details>
+  </div>
+
   <div class="card">
     <h2>Datensicherung</h2>
     <div class="hint" style="margin-top:0;">Falls die App auf dem Handy mal neu eingerichtet werden muss (z. B. bei einem Update-Problem): Hier alle Daten (aktive Einträge, Archiv, Kundenliste) als Datei sichern und in der neuen Version wieder einspielen. Beim Einspielen wird nichts überschrieben oder gelöscht — die Sicherung wird zu vorhandenen Einträgen nur hinzugefügt.</div>
@@ -328,7 +373,7 @@
     <input type="file" id="backupImportInput" accept="application/json" style="display:none;">
   </div>
 
-  <div class="footer-note">Alle Daten bleiben lokal auf diesem Gerät gespeichert.</div>
+  <div class="footer-note">Einträge bleiben lokal auf diesem Gerät gespeichert. Kundenstamm und Aufmaßnummern werden nach der Anmeldung abgeglichen.<br>Version 21</div>
 </main>
 
 <div class="toast" id="toast"></div>
@@ -339,6 +384,9 @@
 
 <script src="vendor/pdf-lib.min.js"></script>
 <script src="vendor/fontkit.umd.min.js"></script>
+<script src="vendor/firebase-app-compat.js"></script>
+<script src="vendor/firebase-auth-compat.js"></script>
+<script src="vendor/firebase-firestore-compat.js"></script>
 <script src="config.js"></script>
 <script src="app.js"></script>
 </body>

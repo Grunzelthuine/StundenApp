@@ -52,8 +52,26 @@ const TEMPLATE = {
   // Ja/Nein-Kästchen der Aufmaß-Mini-Box (x-Bereich, innerhalb aufmassTop/aufmassBottom)
   aufmass: {
     jaX0: 453.5, jaX1: 477.7,
-    neinX0: 477.7, neinX1: 502.0
+    neinX0: 477.7, neinX1: 502.0,
+    // Aufmaßnummer: rechtsbündig vor der vorgedruckten Beschriftung "Aufmaß" (beginnt bei ~417pt)
+    nrLeft: 215, nrRight: 412, nrSize: 10.5, nrBaselineOffset: 5
   },
 
   entriesPerPage: 8
+};
+
+
+// Firebase – dasselbe Projekt wie die Aufmaßsoftware (API-Key ist auf grunzelthuine.github.io beschränkt)
+window.FIREBASE_CONFIG = {
+  apiKey: "AIzaSyC2Zuv9pLuKmNGQYmhgkVrdI3JPxjj0CJ4",
+  authDomain: "aufmass-app-57dab.firebaseapp.com",
+  projectId: "aufmass-app-57dab",
+  storageBucket: "aufmass-app-57dab.firebasestorage.app",
+  messagingSenderId: "909630787979",
+  appId: "1:909630787979:web:e8507f44a1b191b3b99f8e"
+};
+
+const SYNC = {
+  customersCollection: 'kundenstamm',                     // gemeinsam für alle Kollegen + Aufmaß-App
+  aufmassCollections: ['am2_aufmasse', 'am2_bauaufmasse'] // users/{uid}/… (nur lesen)
 };

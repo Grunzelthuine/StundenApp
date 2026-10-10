@@ -1,5 +1,5 @@
 /* Stundenzettel App — Logik
-   Speicherung: localStorage (rein lokal auf dem Gerät)
+   Speicherung: localStorage (Einträge lokal); Kundenstamm + Aufmaßnummern zusätzlich über Firebase
 */
 
 const STORE_KEY = 'stundenzettel_v1';
@@ -284,7 +284,7 @@ function parseTimeExpr(str) {
 function parseFreeText(rawText) {
   const text = (rawText || '').trim();
   const result = { date: null, timeMode: null, start: null, end: null, durationHours: null,
-    breakMinutes: null, customer: null, aufmass: null, desc: '', recognized: [] };
+    breakMinutes: null, customer: null, aufmass: null, aufmassNr: null, desc: '', recognized: [] };
   if (!text) return result;
 
   const removeRanges = [];
@@ -355,17 +355,37 @@ function parseFreeText(rawText) {
   // Kunde
   m = text.match(/\bbei\s+(?:der\s+|den\s+)?(?:familie|firma|kunden?)?\s*([^\n,]+?)(?=\s+(?:und|war|habe)\b|,|\.|$)/i);
   if (m) {
-    const name = m[1].trim().replace(/^(familie|firma|kunden?)\s+/i, '');
+    let name = m[1].trim().replace(/^(familie|firma|kunden?)\s+/i, '');
+    let removeEnd = m.index + m[0].length;
+    // Beginnt der erkannte Text mit einem Kunden aus dem Kundenstamm, nur diesen nehmen –
+    // der Rest (z. B. "Steckdosen gesetzt") bleibt für die Arbeitsbeschreibung.
+    const known = Object.values(state.customers)
+      .filter(c => { const k = c.name.toLowerCase(), n = name.toLowerCase(); return n === k || n.startsWith(k + ' '); })
+      .sort((x, y) => y.name.length - x.name.length)[0];
+    if (known && known.name.length < name.length) {
+      const pos = text.toLowerCase().indexOf(known.name.toLowerCase(), m.index);
+      if (pos >= 0) { removeEnd = pos + known.name.length; name = known.name; }
+    }
     if (name) {
       result.customer = name;
-      removeRanges.push([m.index, m.index + m[0].length]);
+      removeRanges.push([m.index, removeEnd]);
       result.recognized.push(`Kunde: ${name}`);
     }
   }
 
   // Aufmaß (Sonderzeichen "ß" wird von \b in JS nicht als Wortzeichen erkannt,
   // daher Grenzen manuell über Lookaround statt \b prüfen)
-  if (/(?<![a-zäöü])aufmaß(?![a-zäöü])/i.test(text)) { result.aufmass = 'ja'; result.recognized.push('Aufmaß: Ja'); }
+  if (/(?<![a-zäöü])aufmaß(?![a-zäöü])/i.test(text)) {
+    result.aufmass = 'ja'; result.recognized.push('Aufmaß: Ja');
+    // Aufmaßnummer im Satz, z. B. "Aufmaß SB-26-003" (Diktat liefert evtl. "SB 26 003")
+    const nm = text.match(/aufmaß(?:nummer)?\s*(?:nr\.?|nummer)?\s*([A-Za-zÄÖÜäöü]{1,4})[-\s]?(\d{2})[-\s]?(\d{3})(?!\d)/i)
+      || text.match(/(?<![A-Za-z0-9])([A-Za-zÄÖÜäöü]{1,4})[-\s]?(\d{2})[-\s]?(\d{3})(?!\d)/);
+    if (nm) {
+      result.aufmassNr = `${nm[1].toUpperCase()}-${nm[2]}-${nm[3]}`;
+      removeRanges.push([nm.index, nm.index + nm[0].length]);
+      result.recognized.push(`Aufmaß-Nr.: ${result.aufmassNr}`);
+    }
+  }
 
   // Rest als Arbeitsbeschreibung: erkannte Abschnitte herausschneiden, Reste aufräumen
   removeRanges.sort((a, b) => b[0] - a[0]);
@@ -422,13 +442,14 @@ function applyFreeTextResult(result) {
   if (result.customer) {
     $('f-customer').value = result.customer;
     $('f-customer').dispatchEvent(new Event('input'));
+    hideSuggest();
   }
 
   if (result.desc) $('f-desc').value = result.desc;
 
   if (result.aufmass) {
-    aufmass = result.aufmass;
-    document.querySelectorAll('#aufmassSeg button').forEach(b => b.classList.toggle('active', b.dataset.aufmass === result.aufmass));
+    setAufmassUI(result.aufmass);
+    if (result.aufmassNr) setAufmassNr('f', result.aufmassNr);
   }
 
   updateComputedHint();
@@ -612,6 +633,8 @@ function updateTimeDefaults() {
 }
 
 function initForm() {
+  $('f-nrHost').innerHTML = aufmassPickerHtml('f');
+  bindAufmassPicker('f');
   $('f-date').value = todayISO();
   $('f-employee').value = state.employeeName || '';
   refreshCustomerList();
@@ -667,8 +690,7 @@ function initForm() {
   $('aufmassSeg').addEventListener('click', (e) => {
     const btn = e.target.closest('button[data-aufmass]');
     if (!btn) return;
-    aufmass = btn.dataset.aufmass;
-    document.querySelectorAll('#aufmassSeg button').forEach(b => b.classList.toggle('active', b === btn));
+    setAufmassUI(btn.dataset.aufmass);
   });
 
   restrictSliderToThumbDrag($('f-start'));
@@ -689,18 +711,7 @@ function initForm() {
   bindTimeInputToSlider($('f-end-label'), $('f-end'), updateComputedHint, startBeforeEndValidator($('f-start-label'), false));
   $('f-duration').addEventListener('input', updateComputedHint);
 
-  $('f-customer').addEventListener('input', () => {
-    const name = $('f-customer').value.trim();
-    if (!name) { $('newCustomerBox').style.display = 'none'; return; }
-    $('newCustomerBox').style.display = 'block';
-    const known = state.customers[name.toLowerCase()];
-    if (known) {
-      $('f-customer-address').value = known.address || '';
-      document.querySelector('label[for="f-customer-address"]').textContent = 'Adresse (bekannter Kunde – bei Bedarf anpassen)';
-    } else {
-      document.querySelector('label[for="f-customer-address"]').textContent = 'Adresse (Neukunde) — Straße/Ort, Telefon';
-    }
-  });
+  initCustomerField();
 
   $('parseFreeTextBtn').addEventListener('click', () => {
     const text = $('f-freetext').value.trim();
@@ -865,6 +876,7 @@ function readFormAsEntry(preview = false) {
     id: uid(),
     date, customer, address, desc,
     aufmass,
+    aufmassNr: aufmass === 'ja' ? getAufmassNr('f') : '',
     timeMode,
     breakMinutes: breakMinutes || 0
   };
@@ -895,12 +907,11 @@ function saveEntry() {
   const entry = readFormAsEntry(false);
   state.entries.push(entry);
 
-  const address = $('f-customer-address').value.trim();
-  state.customers[customer.toLowerCase()] = { name: customer, address };
+  // Kunde in den Kundenstamm (neu anlegen bzw. Adresse ergänzen)
+  upsertCustomer(customer, $('f-customer-address').value);
 
   saveState();
   renderEntries();
-  refreshCustomerList();
   showToast('Eintrag gespeichert.');
 
   resetEntryFormFields();
@@ -912,6 +923,8 @@ function resetEntryFormFields() {
   $('freetextBox').open = false;
   $('f-customer').value = '';
   $('f-customer-address').value = '';
+  addrForKey = null;
+  hideSuggest();
   $('newCustomerBox').style.display = 'none';
   document.querySelector('label[for="f-customer-address"]').textContent = 'Adresse (Neukunde) — Straße/Ort, Telefon';
   $('f-desc').value = '';
@@ -926,20 +939,10 @@ function resetEntryFormFields() {
   $('f-break-custom').value = '';
   document.querySelectorAll('#breakBtns .qbtn').forEach(b => b.classList.toggle('active', b.dataset.break === '0'));
 
-  aufmass = 'nein';
-  document.querySelectorAll('#aufmassSeg button').forEach(b => b.classList.toggle('active', b.dataset.aufmass === 'nein'));
+  setAufmassNr('f', '');
+  setAufmassUI('nein');
 
   updateTimeDefaults(); // Von = letztes Bis desselben Tages (oder 07:30), Bis = jetzt aufgerundet
-}
-
-function refreshCustomerList() {
-  const dl = $('customerList');
-  dl.innerHTML = '';
-  Object.values(state.customers).forEach(c => {
-    const opt = document.createElement('option');
-    opt.value = c.name;
-    dl.appendChild(opt);
-  });
 }
 
 // ---------- Eintragsliste ----------
@@ -985,7 +988,7 @@ function renderEntries() {
       item.className = 'entry-item' + (isVacation(e) ? ' vacation' : '');
       item.innerHTML = `
         <div class="info">
-          <div class="customer">${escapeHtml(e.customer)} ${e.aufmass === 'ja' ? '<span class="badge">Aufmaß</span>' : ''}</div>
+          <div class="customer">${escapeHtml(e.customer)} ${aufmassBadge(e)}</div>
           <div class="desc">${escapeHtml(e.desc)}</div>
           <div class="meta">${timeLabel}${e.breakMinutes ? ` · ${e.breakMinutes} Min Pause` : ''} · ${formatHoursDE(minutesToHoursDecimal(mins))} Std</div>
         </div>
@@ -1023,6 +1026,8 @@ function openEditModal(id) {
     <input type="date" id="m-date" value="${e.date}">
     <label>Kunde</label>
     <input type="text" id="m-customer" value="${escapeHtml(e.customer)}">
+    <label>Adresse (Straße/Ort, Telefon)</label>
+    <textarea id="m-address" rows="2">${escapeHtml(e.address || (state.customers[custKey(e.customer)] || {}).address || '')}</textarea>
     <label>Arbeitsbeschreibung</label>
     <textarea id="m-desc" rows="3">${escapeHtml(e.desc)}</textarea>
     <label>Zeit</label>
@@ -1050,12 +1055,19 @@ function openEditModal(id) {
       <button type="button" data-aufmass="nein" class="${e.aufmass==='nein'?'active':''}">Nein</button>
       <button type="button" data-aufmass="ja" class="${e.aufmass==='ja'?'active':''}">Ja</button>
     </div>
+    <div id="m-nrHost"></div>
     <div class="btn-block-row" style="margin-top:16px;">
       <button class="btn btn-secondary" id="m-cancel">Abbrechen</button>
       <button class="btn btn-primary" id="m-save">Speichern</button>
     </div>
   `;
   let mTimeMode = e.timeMode, mAufmass = e.aufmass;
+  modal.querySelector('#m-nrHost').innerHTML = aufmassPickerHtml('m');
+  bindAufmassPicker('m');
+  refreshAufmassPicker('m', e.customer);
+  setAufmassNr('m', e.aufmassNr || '');
+  $('m-nrBox').style.display = mAufmass === 'ja' ? 'block' : 'none';
+  modal.querySelector('#m-customer').addEventListener('input', () => refreshAufmassPicker('m', modal.querySelector('#m-customer').value));
   modal.querySelector('#m-timeSeg').addEventListener('click', (ev) => {
     const btn = ev.target.closest('button[data-mode]'); if (!btn) return;
     mTimeMode = btn.dataset.mode;
@@ -1080,6 +1092,8 @@ function openEditModal(id) {
     const btn = ev.target.closest('button[data-aufmass]'); if (!btn) return;
     mAufmass = btn.dataset.aufmass;
     modal.querySelectorAll('#m-aufmassSeg button').forEach(b => b.classList.toggle('active', b===btn));
+    $('m-nrBox').style.display = mAufmass === 'ja' ? 'block' : 'none';
+    if (mAufmass === 'ja') loadAufmassNummern(false);
   });
   modal.querySelector('#m-cancel').addEventListener('click', closeEditModal);
   modal.querySelector('#m-save').addEventListener('click', () => {
@@ -1098,6 +1112,9 @@ function openEditModal(id) {
     }
     e.breakMinutes = parseFloat(modal.querySelector('#m-break').value) || 0;
     e.aufmass = mAufmass;
+    e.aufmassNr = mAufmass === 'ja' ? getAufmassNr('m') : '';
+    e.address = modal.querySelector('#m-address').value.trim();
+    upsertCustomer(e.customer, e.address);
     saveState();
     renderEntries();
     closeEditModal();
@@ -1157,6 +1174,7 @@ function mergeEntriesByCustomerForExport(entries) {
       address: withAddress ? withAddress.address : '',
       desc: descs.join(' + '),
       aufmass: group.some(e => e.aufmass === 'ja') ? 'ja' : 'nein',
+      aufmassNr: [...new Set(group.map(e => e.aufmassNr).filter(Boolean))].join(', '),
       timeMode: 'duration',
       durationHours: totalMinutes / 60,
       breakMinutes: 0
@@ -1453,7 +1471,7 @@ function renderArchiveMonthView() {
           item.className = 'entry-item';
           item.innerHTML = `
             <div class="info">
-              <div class="customer">${escapeHtml(e.customer)} ${e.aufmass === 'ja' ? '<span class="badge">Aufmaß</span>' : ''}</div>
+              <div class="customer">${escapeHtml(e.customer)} ${aufmassBadge(e)}</div>
               <div class="desc">${escapeHtml(e.desc)}</div>
               <div class="meta">${timeLabel}${e.breakMinutes ? ` · ${e.breakMinutes} Min Pause` : ''} · ${formatHoursDE(minutesToHoursDecimal(mins))} Std</div>
             </div>
@@ -1531,7 +1549,7 @@ function renderArchive() {
       item.className = 'entry-item';
       item.innerHTML = `
         <div class="info">
-          <div class="customer">${entryDateLabel(e)} · ${escapeHtml(e.customer)} ${e.aufmass === 'ja' ? '<span class="badge">Aufmaß</span>' : ''}</div>
+          <div class="customer">${entryDateLabel(e)} · ${escapeHtml(e.customer)} ${aufmassBadge(e)}</div>
           <div class="desc">${escapeHtml(e.desc)}</div>
           <div class="meta">${timeLabel}${e.breakMinutes ? ` · ${e.breakMinutes} Min Pause` : ''} · ${formatHoursDE(minutesToHoursDecimal(mins))} Std</div>
         </div>
@@ -1625,6 +1643,13 @@ function drawEntryRow(page, font, row, entry, dailyTotalHours_, isLastOfDay) {
   const boxX0 = entry.aufmass === 'ja' ? TEMPLATE.aufmass.jaX0 : TEMPLATE.aufmass.neinX0;
   const boxX1 = entry.aufmass === 'ja' ? TEMPLATE.aufmass.jaX1 : TEMPLATE.aufmass.neinX1;
   const cyTop = (row.aufmassTop + row.aufmassBottom) / 2;
+  // Aufmaßnummer links vor der Beschriftung "Aufmaß" (also vor den Ja/Nein-Kästchen)
+  if (entry.aufmass === 'ja' && entry.aufmassNr) {
+    const A = TEMPLATE.aufmass;
+    const fit = fitOneLine(font, A.nrSize, entry.aufmassNr, A.nrRight - A.nrLeft);
+    const w = font.widthOfTextAtSize(fit.text, fit.size);
+    page.drawText(fit.text, { x: A.nrRight - w, y: topToPdfY(cyTop + A.nrBaselineOffset), size: fit.size, font });
+  }
   const padX = 3, padY = 6;
   const x0 = boxX0 + padX, x1 = boxX1 - padX;
   const yTopPt = topToPdfY(cyTop - padY);
@@ -1727,6 +1752,7 @@ function importDataBackup(file) {
     renderEntries();
     renderArchive();
     refreshCustomerList();
+    pushLocalCustomers();
     if ($('f-employee')) $('f-employee').value = state.employeeName || '';
     showToast(`Sicherung eingespielt: ${newEntries.length} aktive + ${importedArchiveEntries} archivierte Einträge hinzugefügt.`);
   };
@@ -1762,8 +1788,600 @@ async function forceAppUpdate() {
 const updateBtnEl = document.getElementById('updateBtn');
 if (updateBtnEl) updateBtnEl.addEventListener('click', forceAppUpdate);
 
+// ---------- Kundenstamm (lokal + gemeinsam über Firebase) ----------
+// Jeder erfasste Kunde landet im Kundenstamm (mit Adresse, sobald sie bekannt ist).
+// Der Stamm liegt lokal (state.customers → auch offline nutzbar) und – nach Anmeldung –
+// zusätzlich in Firestore (Sammlung "kundenstamm", gemeinsam für alle Kollegen und die Aufmaß-App).
+
+function custKey(name) { return (name || '').trim().toLowerCase(); }
+
+// Zu welchem Kunden (Schlüssel) gehört der Inhalt des Adressfelds gerade?
+let addrForKey = null;
+let suggestItems = [];
+
+const cloud = {
+  ready: false, auth: null, db: null, user: null,
+  unsubCust: null, remote: {}, syncedOnce: false, permissionDenied: false, permToastShown: false,
+  aufmass: [], aufmassLoadedAt: 0, aufmassLoading: false, aufmassError: null
+};
+const AUFMASS_CACHE_KEY = 'stundenzettel_aufmassnr_v1';
+
+// Legt einen Kunden an bzw. ergänzt seine Adresse. Eine vorhandene Adresse wird nie durch
+// eine leere überschrieben. Gibt true zurück, wenn sich etwas geändert hat.
+function upsertCustomer(name, address) {
+  name = (name || '').trim();
+  if (!name) return false;
+  address = (address || '').trim();
+  const key = custKey(name);
+  const cur = state.customers[key];
+  let changed = false;
+  if (!cur) {
+    state.customers[key] = { name, address, t: Date.now() };
+    changed = true;
+  } else if (address && address !== cur.address) {
+    cur.address = address;
+    cur.t = Date.now();
+    changed = true;
+  }
+  if (changed) {
+    saveState();
+    refreshCustomerList();
+    cloudPushCustomer(key);
+  }
+  return changed;
+}
+
+function deleteCustomer(key) {
+  delete state.customers[key];
+  saveState();
+  refreshCustomerList();
+  cloudPushCustomer(key, true);
+}
+
+function customerMatches(q) {
+  const ql = q.trim().toLowerCase();
+  if (!ql) return [];
+  const starts = [], contains = [];
+  Object.values(state.customers).forEach(c => {
+    const n = (c.name || '').toLowerCase();
+    if (n.startsWith(ql)) starts.push(c);
+    else if (n.includes(ql) || (c.address || '').toLowerCase().includes(ql)) contains.push(c);
+  });
+  const byName = (a, b) => a.name.localeCompare(b.name, 'de');
+  return starts.sort(byName).concat(contains.sort(byName)).slice(0, 8);
+}
+
+const ADDR_LABEL_NEW = 'Adresse (Neukunde) — Straße/Ort, Telefon';
+
+function updateAddressLabel() {
+  const name = $('f-customer').value.trim();
+  const known = name ? state.customers[custKey(name)] : null;
+  const lbl = document.querySelector('label[for="f-customer-address"]');
+  if (!known) lbl.textContent = ADDR_LABEL_NEW;
+  else if (known.address) lbl.textContent = 'Adresse (aus Kundenstamm – bei Bedarf ergänzen/ändern)';
+  else lbl.textContent = 'Adresse fehlt im Kundenstamm noch – hier eintragen, wird übernommen';
+}
+
+function hideSuggest() {
+  const box = $('customerSuggest');
+  if (box) { box.classList.remove('show'); box.innerHTML = ''; }
+  suggestItems = [];
+}
+
+function renderSuggest() {
+  const box = $('customerSuggest');
+  const q = $('f-customer').value.trim();
+  if (!q) { hideSuggest(); return; }
+  const matches = customerMatches(q);
+  const exact = state.customers[custKey(q)];
+  if (exact && matches.length <= 1) { hideSuggest(); return; }
+  suggestItems = matches;
+  let html = matches.map((c, i) =>
+    `<div class="suggest-item" data-i="${i}"><div class="s-name">${escapeHtml(c.name)}</div>` +
+    (c.address ? `<div class="s-addr">${escapeHtml(c.address)}</div>` : '') + '</div>').join('');
+  if (!exact) html += `<div class="suggest-item s-new" data-new="1">➕ „${escapeHtml(q)}“ als neuen Kunden übernehmen</div>`;
+  box.innerHTML = html;
+  box.classList.add('show');
+}
+
+function pickCustomer(c) {
+  if (!c) return;
+  $('f-customer').value = c.name;
+  $('f-customer-address').value = c.address || '';
+  addrForKey = custKey(c.name);
+  $('newCustomerBox').style.display = 'block';
+  hideSuggest();
+  updateAddressLabel();
+  if (aufmass === 'ja') refreshAufmassPicker('f', c.name);
+}
+
+function onCustomerInput() {
+  const name = $('f-customer').value.trim();
+  if (!name) {
+    $('newCustomerBox').style.display = 'none';
+    hideSuggest();
+    if (aufmass === 'ja') refreshAufmassPicker('f', '');
+    return;
+  }
+  $('newCustomerBox').style.display = 'block';
+  const key = custKey(name);
+  const known = state.customers[key];
+  const addrEl = $('f-customer-address');
+  if (known) {
+    // Adresse des gewählten Kunden übernehmen – außer sie wurde gerade für genau diesen Kunden eingetippt
+    if (addrForKey !== key) { addrEl.value = known.address || ''; addrForKey = key; }
+  } else if (addrForKey && state.customers[addrForKey]) {
+    // Feld enthält noch die Adresse eines anderen (bekannten) Kunden → leeren
+    addrEl.value = '';
+    addrForKey = null;
+  }
+  updateAddressLabel();
+  renderSuggest();
+  if (aufmass === 'ja') refreshAufmassPicker('f', name);
+}
+
+function initCustomerField() {
+  const inp = $('f-customer');
+  inp.addEventListener('input', onCustomerInput);
+  inp.addEventListener('focus', renderSuggest);
+  inp.addEventListener('blur', () => setTimeout(hideSuggest, 250));
+  const box = $('customerSuggest');
+  box.addEventListener('mousedown', (e) => e.preventDefault()); // Fokus im Feld lassen
+  box.addEventListener('click', (e) => {
+    const it = e.target.closest('.suggest-item');
+    if (!it) return;
+    if (it.dataset.new) {
+      const name = inp.value.trim();
+      upsertCustomer(name, $('f-customer-address').value);
+      hideSuggest();
+      updateAddressLabel();
+      showToast(`„${name}“ zum Kundenstamm hinzugefügt – Adresse bitte unten eintragen.`);
+      $('f-customer-address').focus();
+    } else {
+      pickCustomer(suggestItems[parseInt(it.dataset.i, 10)]);
+    }
+  });
+  const addr = $('f-customer-address');
+  addr.addEventListener('input', () => { addrForKey = custKey(inp.value) || null; });
+  // Adresse nachträglich zu einem schon bekannten Kunden eingetragen → in den Stamm übernehmen
+  addr.addEventListener('change', () => {
+    const name = inp.value.trim();
+    const known = name ? state.customers[custKey(name)] : null;
+    const a = addr.value.trim();
+    if (known && a && a !== known.address) {
+      upsertCustomer(name, a);
+      updateAddressLabel();
+      showToast('Adresse im Kundenstamm ergänzt.');
+    }
+  });
+}
+
+// ----- Kundenstamm-Ansicht -----
+
+function renderCustomerStamm() {
+  const wrap = $('stammList');
+  if (!wrap) return;
+  const q = (($('stammSearch') || {}).value || '').trim().toLowerCase();
+  const all = Object.entries(state.customers).map(([key, c]) => ({ key, ...c }))
+    .sort((a, b) => a.name.localeCompare(b.name, 'de'));
+  $('stammCountBadge').textContent = all.length;
+  const list = q ? all.filter(c => c.name.toLowerCase().includes(q) || (c.address || '').toLowerCase().includes(q)) : all;
+  wrap.innerHTML = '';
+  if (!list.length) {
+    wrap.innerHTML = `<div class="empty-state">${all.length ? 'Kein Kunde gefunden.' : 'Noch keine Kunden im Stamm.'}</div>`;
+    return;
+  }
+  list.slice(0, 40).forEach(c => {
+    const item = document.createElement('div');
+    item.className = 'entry-item';
+    item.innerHTML = `
+      <div class="info">
+        <div class="customer">${escapeHtml(c.name)}</div>
+        <div class="desc">${c.address ? escapeHtml(c.address) : '<span style="color:var(--red)">Adresse fehlt</span>'}</div>
+      </div>
+      <div class="actions"><button class="icon-btn edit" title="Adresse bearbeiten">✏️</button></div>`;
+    item.querySelector('.edit').addEventListener('click', () => openCustomerModal(c.key));
+    wrap.appendChild(item);
+  });
+  if (list.length > 40) {
+    const more = document.createElement('div');
+    more.className = 'hint';
+    more.textContent = `… und ${list.length - 40} weitere – Suche eingrenzen.`;
+    wrap.appendChild(more);
+  }
+}
+
+function refreshCustomerList() {
+  renderCustomerStamm();
+}
+
+function openCustomerModal(key) {
+  const c = state.customers[key];
+  if (!c) return;
+  const modal = $('editModal');
+  modal.innerHTML = `
+    <h3>Kunde im Kundenstamm</h3>
+    <label>Name</label>
+    <div style="font-weight:600; font-size:16px;">${escapeHtml(c.name)}</div>
+    <label>Adresse (Straße/Ort, Telefon)</label>
+    <textarea id="mc-address" rows="3">${escapeHtml(c.address || '')}</textarea>
+    <div class="hint">Änderungen gelten für alle Kollegen. Tippfehler im Namen: Kunde löschen und neu anlegen.</div>
+    <div class="btn-block-row" style="margin-top:16px;">
+      <button class="btn btn-secondary" id="mc-cancel">Abbrechen</button>
+      <button class="btn btn-primary" id="mc-save">Speichern</button>
+    </div>
+    <button class="btn btn-danger" id="mc-del">Kunde löschen</button>`;
+  modal.querySelector('#mc-cancel').addEventListener('click', closeEditModal);
+  modal.querySelector('#mc-save').addEventListener('click', () => {
+    const a = modal.querySelector('#mc-address').value.trim();
+    if (!a) { showToast('Bitte eine Adresse eintragen (oder Abbrechen).'); return; }
+    upsertCustomer(c.name, a);
+    closeEditModal();
+    showToast('Kundenstamm aktualisiert.');
+  });
+  modal.querySelector('#mc-del').addEventListener('click', () => {
+    if (!confirm(`„${c.name}“ aus dem Kundenstamm löschen?${cloud.user ? ' Das gilt für alle Kollegen.' : ''}`)) return;
+    deleteCustomer(key);
+    closeEditModal();
+    showToast('Kunde gelöscht.');
+  });
+  $('editModalBackdrop').classList.add('show');
+}
+
+// ---------- Aufmaßnummer (Auswahl aus der Aufmaßsoftware) ----------
+
+function aufmassBadge(e) {
+  if (e.aufmass !== 'ja') return '';
+  return `<span class="badge">Aufmaß${e.aufmassNr ? ' ' + escapeHtml(e.aufmassNr) : ''}</span>`;
+}
+
+function aufmassPickerHtml(p) {
+  return `<div id="${p}-nrBox" style="display:none;">
+    <label for="${p}-nrSel" style="display:flex; justify-content:space-between; align-items:center;">
+      <span>Aufmaßnummer</span>
+      <button type="button" class="icon-btn" id="${p}-nrReload" title="Liste aktualisieren" style="padding:0 4px;">🔄</button>
+    </label>
+    <select id="${p}-nrSel"></select>
+    <input type="text" id="${p}-nrFree" placeholder="Nummer eintippen, z. B. SB-26-003" autocomplete="off" autocapitalize="characters" style="display:none; margin-top:8px;">
+    <div class="hint" id="${p}-nrHint"></div>
+  </div>`;
+}
+
+function getAufmassNr(p) {
+  const sel = $(p + '-nrSel');
+  if (!sel) return '';
+  if (sel.value === '__free__') return (($(p + '-nrFree') || {}).value || '').trim();
+  return sel.value || '';
+}
+
+function setAufmassNr(p, nr) {
+  const sel = $(p + '-nrSel');
+  if (!sel) return;
+  const free = $(p + '-nrFree');
+  nr = (nr || '').trim();
+  if (!nr) {
+    sel.value = (cloud.aufmass.length ? '' : '__free__');
+    free.value = '';
+  } else if ([...sel.options].some(o => o.value === nr)) {
+    sel.value = nr;
+    free.value = '';
+  } else {
+    sel.value = '__free__';
+    free.value = nr;
+  }
+  free.style.display = sel.value === '__free__' ? 'block' : 'none';
+}
+
+function bindAufmassPicker(p) {
+  const sel = $(p + '-nrSel');
+  sel.addEventListener('change', () => {
+    const free = $(p + '-nrFree');
+    free.style.display = sel.value === '__free__' ? 'block' : 'none';
+    if (sel.value === '__free__') free.focus();
+  });
+  $(p + '-nrReload').addEventListener('click', async () => {
+    if (!cloud.user) { showToast('Bitte zuerst anmelden (☁️ oben).'); return; }
+    await loadAufmassNummern(true);
+    showToast(cloud.aufmassError ? 'Aufmaßnummern konnten nicht geladen werden.' : `${cloud.aufmass.length} Aufmaßnummern geladen.`);
+  });
+}
+
+function refreshAufmassPicker(p, customerName) {
+  const sel = $(p + '-nrSel');
+  if (!sel) return;
+  const cur = getAufmassNr(p);
+  const list = cloud.aufmass || [];
+  const q = (customerName || '').trim().toLowerCase();
+  const fits = (a) => q && a.kunde && (a.kunde.toLowerCase().includes(q) || q.includes(a.kunde.toLowerCase()));
+  const match = list.filter(fits);
+  const rest = list.filter(a => !fits(a)).slice(0, 80);
+  const opt = (a) => `<option value="${escapeHtml(a.nummer)}">${escapeHtml(a.nummer)} · ${escapeHtml(a.kunde || '—')}${a.datum ? ' · ' + formatDateFileDE(a.datum) : ''}${a.art === 'Bauaufmaß' ? ' · Bau' : ''}</option>`;
+  let html = '<option value="">– Nummer wählen –</option>';
+  if (match.length) html += `<optgroup label="Passend zu „${escapeHtml(customerName.trim())}“">${match.map(opt).join('')}</optgroup>`;
+  if (rest.length) html += `<optgroup label="${match.length ? 'Weitere' : 'Neueste zuerst'}">${rest.map(opt).join('')}</optgroup>`;
+  html += '<option value="__free__">✏️ Andere Nummer eintippen …</option>';
+  sel.innerHTML = html;
+  setAufmassNr(p, cur);
+
+  const hint = $(p + '-nrHint');
+  if (!cloud.user && !list.length) hint.textContent = 'Nicht angemeldet – Nummer eintippen oder oben unter ☁️ anmelden, dann erscheint die Auswahl aus der Aufmaßsoftware.';
+  else if (!cloud.user) hint.textContent = `Nicht angemeldet – ${list.length} Nummern vom letzten Abgleich.`;
+  else if (cloud.aufmassError && !list.length) hint.textContent = 'Aufmaßnummern konnten nicht geladen werden (offline?) – Nummer bitte eintippen.';
+  else if (!list.length) hint.textContent = 'Keine Aufmaßnummern gefunden (in der Aufmaßsoftware muss zuerst ein PDF erstellt sein) – Nummer bitte eintippen.';
+  else hint.textContent = `${list.length} Nummern aus der Aufmaßsoftware${match.length ? ` · ${match.length} passend zum Kunden` : ''}.`;
+}
+
+function refreshAllAufmassPickers() {
+  if ($('f-nrSel')) refreshAufmassPicker('f', $('f-customer').value);
+  if ($('m-nrSel')) refreshAufmassPicker('m', ($('m-customer') || {}).value || '');
+}
+
+function setAufmassUI(v) {
+  aufmass = v;
+  document.querySelectorAll('#aufmassSeg button').forEach(b => b.classList.toggle('active', b.dataset.aufmass === v));
+  const box = $('f-nrBox');
+  if (box) box.style.display = v === 'ja' ? 'block' : 'none';
+  if (v === 'ja') {
+    refreshAufmassPicker('f', $('f-customer').value);
+    loadAufmassNummern(false);
+  }
+}
+
+async function loadAufmassNummern(force) {
+  if (!cloud.user || !cloud.db) return;
+  if (!force && Date.now() - cloud.aufmassLoadedAt < 120000) return;
+  if (cloud.aufmassLoading) return;
+  cloud.aufmassLoading = true;
+  try {
+    const seen = new Set();
+    const liste = [];
+    for (const coll of SYNC.aufmassCollections) {
+      const snap = await cloud.db.collection('users').doc(cloud.user.uid).collection(coll).get();
+      snap.forEach((doc) => {
+        const x = doc.data();
+        if (!x || x.del || !x.d) return;
+        let a;
+        try { a = JSON.parse(x.d); } catch (e) { return; }
+        if (!a || !a.nummer || seen.has(String(a.nummer))) return;
+        seen.add(String(a.nummer));
+        liste.push({
+          nummer: String(a.nummer),
+          kunde: (a.kunde && a.kunde.name) || '',
+          baustelle: a.baustelle || '',
+          datum: a.datum || (a.erstellt || '').slice(0, 10),
+          art: a.typ === 'bau' ? 'Bauaufmaß' : 'Aufmaß'
+        });
+      });
+    }
+    liste.sort((x, y) => (y.datum || '').localeCompare(x.datum || '') || y.nummer.localeCompare(x.nummer));
+    cloud.aufmass = liste;
+    cloud.aufmassLoadedAt = Date.now();
+    cloud.aufmassError = null;
+    try { localStorage.setItem(AUFMASS_CACHE_KEY, JSON.stringify({ t: Date.now(), list: liste })); } catch (e) { /* ignore */ }
+  } catch (err) {
+    cloud.aufmassError = err;
+  } finally {
+    cloud.aufmassLoading = false;
+  }
+  refreshAllAufmassPickers();
+  updateSyncUI();
+}
+
+function loadAufmassCache() {
+  try {
+    const x = JSON.parse(localStorage.getItem(AUFMASS_CACHE_KEY) || 'null');
+    if (x && Array.isArray(x.list)) cloud.aufmass = x.list;
+  } catch (e) { /* ignore */ }
+}
+
+// ---------- Cloud (Firebase): Anmeldung + gemeinsamer Kundenstamm ----------
+
+function cloudInit() {
+  loadAufmassCache();
+  if (window.firebase && window.FIREBASE_CONFIG) {
+    try {
+      firebase.initializeApp(window.FIREBASE_CONFIG);
+      cloud.auth = firebase.auth();
+      cloud.db = firebase.firestore();
+      try {
+        const p = cloud.db.enablePersistence({ synchronizeTabs: true });
+        if (p && p.catch) p.catch(() => {});
+      } catch (e) { /* Offline-Cache nicht verfügbar – App läuft trotzdem */ }
+      cloud.auth.onAuthStateChanged(onAuthChanged);
+      cloud.ready = true;
+    } catch (e) {
+      console.warn('Firebase-Initialisierung fehlgeschlagen', e);
+    }
+  }
+  initSyncUi();
+  updateSyncUI();
+  window.addEventListener('online', () => { if (cloud.user) loadAufmassNummern(false); });
+}
+
+function onAuthChanged(user) {
+  cloud.user = user || null;
+  if (user) {
+    startCustomerSync();
+    loadAufmassNummern(true);
+  } else {
+    stopCustomerSync();
+    cloud.aufmass = [];
+    cloud.aufmassLoadedAt = 0;
+    try { localStorage.removeItem(AUFMASS_CACHE_KEY); } catch (e) { /* ignore */ }
+    refreshAllAufmassPickers();
+  }
+  updateSyncUI();
+}
+
+function cloudError(err) {
+  if (err && err.code === 'permission-denied') {
+    cloud.permissionDenied = true;
+    if (!cloud.permToastShown) {
+      cloud.permToastShown = true;
+      showToast('Gemeinsamer Kundenstamm noch nicht freigeschaltet – Kunden bleiben vorerst nur lokal.');
+    }
+    updateSyncUI();
+  } else {
+    console.warn('Cloud-Fehler', err);
+  }
+}
+
+function customerDocRef(key) {
+  return cloud.db.collection(SYNC.customersCollection).doc(encodeURIComponent(key));
+}
+
+function cloudPushCustomer(key, deleted) {
+  if (!cloud.user || !cloud.db) return;
+  const by = cloud.user.email || cloud.user.uid;
+  if (deleted) {
+    cloud.remote[key] = { address: '', del: true };
+    customerDocRef(key).set({ key, del: true, t: Date.now(), by }, { merge: true }).catch(cloudError);
+    return;
+  }
+  const c = state.customers[key];
+  if (!c) return;
+  cloud.remote[key] = { address: c.address || '', del: false };
+  customerDocRef(key).set({ key, name: c.name, address: c.address || '', t: c.t || Date.now(), by, del: false }, { merge: true }).catch(cloudError);
+}
+
+function startCustomerSync() {
+  stopCustomerSync();
+  cloud.syncedOnce = false;
+  cloud.remote = {};
+  cloud.unsubCust = cloud.db.collection(SYNC.customersCollection).onSnapshot((snap) => {
+    cloud.permissionDenied = false;
+    let changed = false;
+    snap.docChanges().forEach((ch) => {
+      const x = ch.doc.data() || {};
+      let key = x.key;
+      if (!key) { try { key = decodeURIComponent(ch.doc.id); } catch (e) { key = ch.doc.id; } }
+      if (ch.type === 'removed') { delete cloud.remote[key]; return; }
+      cloud.remote[key] = { address: x.address || '', del: !!x.del };
+      if (x.del) {
+        if (state.customers[key]) { delete state.customers[key]; changed = true; }
+        return;
+      }
+      if (!x.name) return;
+      const cur = state.customers[key];
+      // Eine lokal vorhandene Adresse nicht durch eine leere aus der Cloud löschen (sie wird hochgeladen)
+      const rec = { name: x.name, address: x.address || (cur && cur.address) || '', t: x.t || 0 };
+      if (!cur || cur.name !== rec.name || cur.address !== rec.address) { state.customers[key] = rec; changed = true; }
+    });
+    if (changed) { saveState(); refreshCustomerList(); updateAddressLabelSafe(); }
+    if (!snap.metadata.fromCache && !cloud.syncedOnce) {
+      cloud.syncedOnce = true;
+      pushLocalCustomers();
+    }
+    updateSyncUI();
+  }, cloudError);
+}
+
+function stopCustomerSync() {
+  if (cloud.unsubCust) { try { cloud.unsubCust(); } catch (e) { /* ignore */ } }
+  cloud.unsubCust = null;
+  cloud.syncedOnce = false;
+  cloud.remote = {};
+}
+
+function updateAddressLabelSafe() {
+  try { updateAddressLabel(); } catch (e) { /* ignore */ }
+}
+
+// Lädt lokal vorhandene Kunden hoch, die in der Cloud fehlen (oder dort noch keine Adresse haben).
+function pushLocalCustomers() {
+  if (!cloud.user || !cloud.db || !cloud.syncedOnce) return;
+  const by = cloud.user.email || cloud.user.uid;
+  const ops = [];
+  Object.entries(state.customers).forEach(([key, c]) => {
+    const r = cloud.remote[key];
+    if (!r) ops.push({ key, data: { key, name: c.name, address: c.address || '', t: c.t || Date.now(), by, del: false } });
+    else if (!r.del && !r.address && c.address) ops.push({ key, data: { address: c.address, t: Date.now(), by } });
+  });
+  if (!ops.length) return;
+  for (let i = 0; i < ops.length; i += 400) {
+    const batch = cloud.db.batch();
+    ops.slice(i, i + 400).forEach(o => {
+      batch.set(customerDocRef(o.key), o.data, { merge: true });
+      cloud.remote[o.key] = { address: o.data.address || '', del: false };
+    });
+    batch.commit().catch(cloudError);
+  }
+  showToast(`${ops.length} Kunden mit dem gemeinsamen Kundenstamm abgeglichen.`);
+}
+
+// ----- Anmelde-Oberfläche -----
+
+function authErrorText(err) {
+  switch (err && err.code) {
+    case 'auth/invalid-email': return 'Ungültige E-Mail-Adresse.';
+    case 'auth/user-not-found':
+    case 'auth/wrong-password':
+    case 'auth/invalid-credential': return 'E-Mail oder Passwort stimmt nicht.';
+    case 'auth/too-many-requests': return 'Zu viele Versuche – bitte kurz warten.';
+    case 'auth/network-request-failed': return 'Keine Internetverbindung.';
+    case 'auth/user-disabled': return 'Dieses Konto ist gesperrt.';
+    default: return 'Anmeldung fehlgeschlagen' + (err && err.code ? ' (' + err.code + ')' : '.');
+  }
+}
+
+function initSyncUi() {
+  $('syncBtn').addEventListener('click', () => $('syncCard').scrollIntoView({ behavior: 'smooth', block: 'start' }));
+  $('loginForm').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    if (!cloud.auth) { showToast('Cloud-Funktion nicht verfügbar.'); return; }
+    const email = $('login-email').value.trim();
+    const pw = $('login-pw').value;
+    if (!email || !pw) { showToast('Bitte E-Mail und Passwort eingeben.'); return; }
+    $('loginBtn').disabled = true;
+    try {
+      await cloud.auth.signInWithEmailAndPassword(email, pw);
+      $('login-pw').value = '';
+      showToast('Angemeldet.');
+    } catch (err) {
+      showToast(authErrorText(err));
+    } finally {
+      $('loginBtn').disabled = false;
+    }
+  });
+  $('resetPwBtn').addEventListener('click', async () => {
+    const email = $('login-email').value.trim();
+    if (!cloud.auth || !email) { showToast('Bitte zuerst die E-Mail-Adresse eintragen.'); return; }
+    try { await cloud.auth.sendPasswordResetEmail(email); showToast('E-Mail zum Zurücksetzen wurde gesendet.'); }
+    catch (err) { showToast(authErrorText(err)); }
+  });
+  $('logoutBtn').addEventListener('click', async () => {
+    if (!cloud.auth) return;
+    await cloud.auth.signOut();
+    showToast('Abgemeldet.');
+  });
+  $('stammSearch').addEventListener('input', renderCustomerStamm);
+}
+
+function updateSyncUI() {
+  const on = !!cloud.user;
+  $('syncDot').classList.toggle('on', on && !cloud.permissionDenied);
+  $('loginForm').style.display = on || !cloud.ready ? 'none' : 'block';
+  $('loggedBox').style.display = on ? 'block' : 'none';
+  const lines = [];
+  if (!cloud.ready) {
+    lines.push('Cloud-Funktion nicht verfügbar – die App arbeitet nur lokal.');
+  } else if (!on) {
+    lines.push('Nicht angemeldet. Mit demselben Konto wie in der Aufmaßsoftware anmelden, um Aufmaßnummern auszuwählen und den gemeinsamen Kundenstamm zu nutzen. Bis dahin bleiben Kunden nur auf diesem Gerät und werden nach der Anmeldung automatisch abgeglichen.');
+  } else {
+    lines.push(`✅ Angemeldet als ${escapeHtml(cloud.user.email || '')}`);
+    if (cloud.permissionDenied) lines.push('<span style="color:var(--red)">⚠️ Gemeinsamer Kundenstamm noch nicht freigeschaltet (Firestore-Regel fehlt) – Kunden bleiben vorerst nur auf diesem Gerät.</span>');
+    else lines.push(`Kundenstamm: ${Object.keys(state.customers).length} Kunden${cloud.syncedOnce ? ' (abgeglichen)' : ' (wird abgeglichen …)'}`);
+    if (cloud.aufmassError && !cloud.aufmass.length) lines.push('Aufmaßnummern konnten nicht geladen werden.');
+    else lines.push(`Aufmaßnummern: ${cloud.aufmass.length} geladen`);
+  }
+  $('syncStatus').innerHTML = lines.join('<br>');
+}
+
+
 // ---------- Init ----------
 
 initForm();
 renderEntries();
 renderArchive();
+refreshCustomerList();
+cloudInit();
