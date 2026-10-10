@@ -1077,6 +1077,7 @@ function openEditModal(id) {
     <input type="text" id="m-customer" value="${escapeHtml(e.customer)}">
     <label>Adresse (Straße/Ort, Telefon)</label>
     <textarea id="m-address" rows="2">${escapeHtml(e.address || (state.customers[custKey(e.customer)] || {}).address || '')}</textarea>
+    <button type="button" class="loc-btn" data-loc-target="m-address"><svg class="ic" aria-hidden="true"><use href="#i-pin"/></svg>Adresse aus Standort</button>
     <label>Arbeitsbeschreibung</label>
     <textarea id="m-desc" rows="3">${escapeHtml(e.desc)}</textarea>
     <label>Zeit</label>
@@ -2179,6 +2180,7 @@ function openCustomerModal(key) {
     <input type="text" id="mc-name" value="${escapeHtml(c.name)}" autocomplete="off">
     <label>Adresse (Straße/Ort, Telefon)</label>
     <textarea id="mc-address" rows="3">${escapeHtml(c.address || '')}</textarea>
+    <button type="button" class="loc-btn" data-loc-target="mc-address"><svg class="ic" aria-hidden="true"><use href="#i-pin"/></svg>Adresse aus Standort</button>
     <div class="hint">Änderungen gelten${cloud.user ? ' für alle Kollegen' : ''}. Bei einem neuen Namen werden auch noch nicht exportierte Einträge dieses Kunden umbenannt; bereits exportierte bleiben unverändert.</div>
     <div class="btn-block-row" style="margin-top:16px;">
       <button class="btn btn-secondary" id="mc-cancel">Abbrechen</button>
@@ -2640,3 +2642,84 @@ cloudInit();
   };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
 })();
+
+// ---- v28: Adresse aus aktuellem Standort (OpenStreetMap) ----
+// Nur auf Knopfdruck: Standort vom Gerät holen, per OpenStreetMap (Nominatim, Reserve: Photon)
+// in eine Adresse umwandeln und als Vorschlag ins Adressfeld schreiben. Eine vorhandene
+// Telefonangabe („Tel. …“) bleibt erhalten.
+function formatOsmAddress(a) {
+  if (!a) return '';
+  const street = a.road || a.pedestrian || a.footway || a.path || a.farmyard || a.hamlet || a.street || '';
+  const nr = a.house_number || a.housenumber || '';
+  const ort = a.village || a.town || a.city || a.hamlet || a.suburb || a.municipality || a.locality || a.district || '';
+  const plz = a.postcode || '';
+  const line1 = [street, nr].filter(Boolean).join(' ');
+  const line2 = [plz, ort].filter(Boolean).join(' ');
+  return [line1, line2].filter(Boolean).join(', ');
+}
+
+async function reverseGeocode(lat, lon) {
+  try {
+    const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}&zoom=18&addressdetails=1&accept-language=de`, { headers: { 'Accept': 'application/json' } });
+    if (r.ok) {
+      const j = await r.json();
+      const txt = formatOsmAddress(j.address);
+      if (txt) return { text: txt, exact: !!(j.address && j.address.house_number) };
+    }
+  } catch (e) { /* Reserve versuchen */ }
+  const r2 = await fetch(`https://photon.komoot.io/reverse?lat=${lat}&lon=${lon}&lang=de&limit=1`);
+  if (!r2.ok) throw new Error('geocode');
+  const j2 = await r2.json();
+  const pr = j2 && j2.features && j2.features[0] && j2.features[0].properties;
+  const txt2 = formatOsmAddress(pr);
+  if (!txt2) throw new Error('geocode');
+  return { text: txt2, exact: !!(pr && pr.housenumber) };
+}
+
+function getPosition() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) { reject({ code: 'nogeo' }); return; }
+    navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 20000, maximumAge: 30000 });
+  });
+}
+
+async function fillAddressFromLocation(btn) {
+  const target = document.getElementById(btn.dataset.locTarget);
+  if (!target || btn.disabled) return;
+  const label = btn.innerHTML;
+  btn.disabled = true;
+  btn.classList.add('busy');
+  btn.lastChild.textContent = 'Standort wird ermittelt …';
+  try {
+    const pos = await getPosition();
+    btn.lastChild.textContent = 'Adresse wird gesucht …';
+    const acc = Math.round(pos.coords.accuracy || 0);
+    const res = await reverseGeocode(pos.coords.latitude.toFixed(6), pos.coords.longitude.toFixed(6));
+    const cur = target.value.trim();
+    const tel = (cur.match(/,?\s*(Tel\.?\s*[:.]?\s*.*)$/i) || [])[1];
+    const curAddr = tel ? cur.slice(0, cur.length - (cur.match(/,?\s*(Tel\.?\s*[:.]?\s*.*)$/i) || [''])[0].length).trim() : cur;
+    if (curAddr && curAddr !== res.text && !confirm(`Gefundene Adresse:\n${res.text}\n\nVorhandene Adresse „${curAddr}“ ersetzen?`)) return;
+    target.value = res.text + (tel ? ', ' + tel : '');
+    target.dispatchEvent(new Event('input', { bubbles: true }));
+    target.dispatchEvent(new Event('change', { bubbles: true }));
+    let msg = `Adresse aus Standort (±${acc} m) – bitte prüfen.`;
+    if (acc > 100) msg = `Standort ungenau (±${acc} m) – Adresse bitte genau prüfen.`;
+    else if (!res.exact) msg = 'Keine Hausnummer gefunden – bitte ergänzen.';
+    showToast(msg, 4500);
+  } catch (err) {
+    const code = err && err.code;
+    if (code === 1) showToast('Standort nicht erlaubt. iPhone: Einstellungen → Datenschutz → Ortungsdienste → Safari-Websites → „Beim Verwenden“.', 7000);
+    else if (code === 2 || code === 3) showToast('Standort konnte nicht ermittelt werden – im Freien erneut versuchen.', 5000);
+    else if (code === 'nogeo') showToast('Dieses Gerät unterstützt keine Standortabfrage.');
+    else showToast('Adresse konnte nicht gefunden werden (Internet?).', 4500);
+  } finally {
+    btn.disabled = false;
+    btn.classList.remove('busy');
+    btn.innerHTML = label;
+  }
+}
+
+document.addEventListener('click', (ev) => {
+  const btn = ev.target.closest && ev.target.closest('.loc-btn');
+  if (btn) { ev.preventDefault(); fillAddressFromLocation(btn); }
+});

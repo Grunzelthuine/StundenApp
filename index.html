@@ -240,6 +240,13 @@
   .status-ok{display:inline-flex; align-items:center; gap:6px; color:var(--green); font-weight:600;}
   .status-warn{display:inline-flex; align-items:flex-start; gap:6px; color:var(--red);}
   .status-ok svg.ic, .status-warn svg.ic{width:16px; height:16px;}
+  .loc-btn{display:inline-flex; align-items:center; gap:6px; margin-top:8px; border:none; background:var(--blue-tint); color:var(--blue);
+    border-radius:22px; padding:8px 14px; font-size:14px; font-weight:600; font-family:inherit; cursor:pointer;}
+  .loc-btn svg.ic{width:17px; height:17px;}
+  .loc-btn:active{filter:brightness(.95);}
+  .loc-btn.busy{opacity:.75;}
+  .loc-btn.busy svg.ic{animation:locpulse 1s ease-in-out infinite;}
+  @keyframes locpulse{50%{transform:scale(.8);}}
 </style>
 </head>
 <body>
@@ -263,6 +270,7 @@
   <symbol id="i-right" viewBox="0 0 24 24"><path d="M9 6l6 6l-6 6"/></symbol>
   <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12l5 5l10-10"/></symbol>
   <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 9v4"/><path d="M10.363 3.591l-8.106 13.534a1.914 1.914 0 0 0 1.636 2.871h16.214a1.914 1.914 0 0 0 1.636-2.87l-8.106-13.536a1.914 1.914 0 0 0-3.274 0z"/><path d="M12 16h.01"/></symbol>
+  <symbol id="i-pin" viewBox="0 0 24 24"><circle cx="12" cy="11" r="3"/><path d="M17.657 16.657l-4.243 4.243a2 2 0 0 1-2.827 0l-4.244-4.243a8 8 0 1 1 11.314 0z"/></symbol>
   <symbol id="i-pencil-plus" viewBox="0 0 24 24"><path d="M4 20h4l10.5-10.5a2.828 2.828 0 1 0-4-4l-10.5 10.5v4"/><path d="M13.5 6.5l4 4"/><path d="M16 19h6"/><path d="M19 16v6"/></symbol>
 </svg>
 
@@ -313,6 +321,7 @@
     <div id="newCustomerBox" style="display:none;">
       <label for="f-customer-address">Adresse (Neukunde) — Straße/Ort, Telefon</label>
       <textarea id="f-customer-address" rows="2" placeholder="z. B. Hauptstraße 1, 49832 Freren, Tel. 0591 123456"></textarea>
+      <button type="button" class="loc-btn" data-loc-target="f-customer-address"><svg class="ic" aria-hidden="true"><use href="#i-pin"/></svg>Adresse aus Standort</button>
     </div>
 
     <label for="f-desc">Arbeitsbeschreibung</label>
@@ -417,7 +426,7 @@
   </div>
 
   <button type="button" class="btn btn-secondary settings-open" id="openSettingsBtn"><span class="ht ht-gray"><svg class="ic" aria-hidden="true"><use href="#i-settings"/></svg></span>Einstellungen &amp; Sicherung</button>
-  <div class="footer-note">Version 27</div>
+  <div class="footer-note">Version 28</div>
 </main>
 
 <main id="settingsView" style="display:none;">
@@ -461,7 +470,7 @@
     </details>
   </div>
 
-  <div class="footer-note">Einträge bleiben lokal auf diesem Gerät gespeichert. Kundenstamm und Aufmaßnummern werden nach der Anmeldung abgeglichen.<br>Version 27</div>
+  <div class="footer-note">Einträge bleiben lokal auf diesem Gerät gespeichert. Kundenstamm und Aufmaßnummern werden nach der Anmeldung abgeglichen.<br>Version 28</div>
 </main>
 
 <div class="toast" id="toast"></div>
