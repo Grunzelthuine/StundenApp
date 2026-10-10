@@ -958,6 +958,7 @@ function saveEntry() {
 
   // Kunde in den Kundenstamm (neu anlegen bzw. Adresse ergänzen)
   upsertCustomer(customer, $('f-customer-address').value);
+  attachFixToCustomer(customer);
 
   saveState();
   renderEntries();
@@ -1165,6 +1166,7 @@ function openEditModal(id) {
     e.aufmassNr = mAufmass === 'ja' ? getAufmassNr('m') : '';
     e.address = modal.querySelector('#m-address').value.trim();
     upsertCustomer(e.customer, e.address);
+    attachFixToCustomer(e.customer);
     saveState();
     renderEntries();
     closeEditModal();
@@ -1849,9 +1851,10 @@ function importDataBackup(file) {
       const r = cloud.remote[key];
       if (r && r.del && (r.t || 0) >= vt) return;
       const cur = state.customers[key];
-      if (!cur) { state.customers[key] = { name: val.name, address: val.address || '', t: vt }; addedCust++; cloudPushCustomer(key); }
+      const geo = hasGeo(val) ? { lat: val.lat, lng: val.lng } : {};
+      if (!cur) { state.customers[key] = { name: val.name, address: val.address || '', t: vt, ...geo }; addedCust++; cloudPushCustomer(key); }
       else if (vt > (cur.t || 0) && (val.name !== cur.name || (val.address && val.address !== cur.address))) {
-        state.customers[key] = { name: val.name, address: val.address || cur.address || '', t: vt };
+        state.customers[key] = { name: val.name, address: val.address || cur.address || '', t: vt, ...(hasGeo(val) ? geo : (hasGeo(cur) ? { lat: cur.lat, lng: cur.lng } : {})) };
         cloudPushCustomer(key);
       }
     });
@@ -2102,7 +2105,7 @@ function renderCustomerStamm() {
     item.className = 'entry-item';
     item.innerHTML = `
       <div class="info">
-        <div class="customer">${escapeHtml(c.name)}</div>
+        <div class="customer">${escapeHtml(c.name)}${hasGeo(c) ? ' <svg class="ic" aria-label="Standort gespeichert" style="width:15px;height:15px;color:var(--blue);margin-top:-3px"><use href="#i-pin"/></svg>' : ''}</div>
         <div class="desc">${c.address ? escapeHtml(c.address) : '<span style="color:var(--red)">Adresse fehlt</span>'}</div>
       </div>
       <div class="actions"><button class="icon-btn edit" title="Name/Adresse bearbeiten" aria-label="Name/Adresse bearbeiten"><svg class="ic" aria-hidden="true"><use href="#i-edit"/></svg></button></div>`;
@@ -2140,9 +2143,10 @@ function renameCustomer(oldKey, newName, address) {
     const target = state.customers[newKey];
     if (target) {
       if (!target.address && (address || c.address)) target.address = address || c.address;
+      if (!hasGeo(target) && hasGeo(c)) { target.lat = c.lat; target.lng = c.lng; }
       target.t = Date.now();
     } else {
-      state.customers[newKey] = { name: newName, address: address || c.address || '', t: Date.now() };
+      state.customers[newKey] = { name: newName, address: address || c.address || '', t: Date.now(), ...(hasGeo(c) ? { lat: c.lat, lng: c.lng } : {}) };
     }
     if (state.customerDeleted) delete state.customerDeleted[newKey];
     delete state.customers[oldKey];
@@ -2186,8 +2190,15 @@ function openCustomerModal(key) {
       <button class="btn btn-secondary" id="mc-cancel">Abbrechen</button>
       <button class="btn btn-primary" id="mc-save">Speichern</button>
     </div>
+    ${hasGeo(c) ? `<div class="hint" id="mc-geo"><svg class="ic" aria-hidden="true" style="width:15px;height:15px;color:var(--blue)"><use href="#i-pin"/></svg> Standort gespeichert (für „Kunde in der Nähe“). <button type="button" class="link-btn" id="mc-geo-del" style="padding:0">Standort entfernen</button></div>` : ''}
     <button class="btn btn-danger" id="mc-del">Kunde löschen</button>`;
   modal.querySelector('#mc-cancel').addEventListener('click', closeEditModal);
+  const geoDel = modal.querySelector('#mc-geo-del');
+  if (geoDel) geoDel.addEventListener('click', () => {
+    c.lat = null; c.lng = null; c.t = Date.now();
+    saveState(); cloudPushCustomer(key); renderCustomerStamm();
+    modal.querySelector('#mc-geo').textContent = 'Standort entfernt – wird beim nächsten Mal neu gelernt.';
+  });
   modal.querySelector('#mc-save').addEventListener('click', () => {
     const newName = modal.querySelector('#mc-name').value.trim();
     const a = modal.querySelector('#mc-address').value.trim();
@@ -2195,6 +2206,7 @@ function openCustomerModal(key) {
     if (!a && c.address) { showToast('Adresse darf nicht leer sein (oder Abbrechen).'); return; }
     if (newName === c.name) {
       if (a) upsertCustomer(c.name, a);
+      attachFixToCustomer(c.name, !!(lastFix && lastFix.target === 'mc-address'));
       closeEditModal();
       showToast('Kundenstamm aktualisiert.');
       return;
@@ -2203,6 +2215,7 @@ function openCustomerModal(key) {
     const existing = newKey !== key ? state.customers[newKey] : null;
     if (existing && !confirm(`„${existing.name}“ gibt es schon im Kundenstamm. „${c.name}“ damit zusammenführen?${existing.address ? '' : ' Die Adresse wird übernommen.'}`)) return;
     const res = renameCustomer(key, newName, a);
+    attachFixToCustomer(newName, !!(lastFix && lastFix.target === 'mc-address'));
     closeEditModal();
     showToast(`${existing ? 'Zusammengeführt' : 'Umbenannt'}: „${res.oldName}“ → „${state.customers[newKey].name}“${res.moved ? ` (${res.moved === 1 ? '1 offener Eintrag' : res.moved + ' offene Einträge'} angepasst)` : ''}.`);
   });
@@ -2430,7 +2443,7 @@ function cloudPushCustomer(key, deleted) {
   if (!c) return;
   if (!c.t) { c.t = Date.now(); saveState(); }
   cloud.remote[key] = { address: c.address || '', del: false, t: c.t, name: c.name };
-  customerDocRef(key).set({ key, name: c.name, address: c.address || '', t: c.t, by, del: false }, { merge: true }).catch(cloudError);
+  customerDocRef(key).set({ key, name: c.name, address: c.address || '', lat: hasGeo(c) ? c.lat : null, lng: hasGeo(c) ? c.lng : null, t: c.t, by, del: false }, { merge: true }).catch(cloudError);
 }
 
 function startCustomerSync() {
@@ -2460,10 +2473,11 @@ function startCustomerSync() {
       if ((state.customerDeleted[key] || 0) > xt) { cloudPushCustomer(key, true); return; }
       const cur = state.customers[key];
       // Lokal neuer geändert (z. B. umbenannt, als man nicht angemeldet war) -> lokalen Stand hochladen
-      if (cur && (cur.t || 0) > xt && (cur.name !== x.name || (cur.address || '') !== (x.address || ''))) { cloudPushCustomer(key); return; }
+      if (cur && (cur.t || 0) > xt && (cur.name !== x.name || (cur.address || '') !== (x.address || '') || !sameGeo(cur, x))) { cloudPushCustomer(key); return; }
       // Eine lokal vorhandene Adresse nicht durch eine leere aus der Cloud löschen (sie wird hochgeladen)
       const rec = { name: x.name, address: x.address || (cur && cur.address) || '', t: x.t || 0 };
-      if (!cur || cur.name !== rec.name || cur.address !== rec.address) { state.customers[key] = rec; changed = true; }
+      if ('lat' in x) { rec.lat = x.lat; rec.lng = x.lng; } else if (hasGeo(cur)) { rec.lat = cur.lat; rec.lng = cur.lng; }
+      if (!cur || cur.name !== rec.name || cur.address !== rec.address || !sameGeo(cur, rec)) { state.customers[key] = rec; changed = true; }
     });
     if (changed) { saveState(); refreshCustomerList(); updateAddressLabelSafe(); }
     if (!snap.metadata.fromCache && !cloud.syncedOnce) {
@@ -2492,7 +2506,7 @@ function pushLocalCustomers() {
   const ops = [];
   Object.entries(state.customers).forEach(([key, c]) => {
     const r = cloud.remote[key];
-    if (!r) ops.push({ key, data: { key, name: c.name, address: c.address || '', t: c.t || Date.now(), by, del: false } });
+    if (!r) ops.push({ key, data: { key, name: c.name, address: c.address || '', lat: hasGeo(c) ? c.lat : null, lng: hasGeo(c) ? c.lng : null, t: c.t || Date.now(), by, del: false } });
     else if (!r.del && !r.address && c.address) ops.push({ key, data: { address: c.address, t: Date.now(), by } });
   });
   if (!ops.length) return;
@@ -2679,7 +2693,7 @@ async function reverseGeocode(lat, lon) {
 function getPosition() {
   return new Promise((resolve, reject) => {
     if (!navigator.geolocation) { reject({ code: 'nogeo' }); return; }
-    navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 20000, maximumAge: 30000 });
+    navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 });
   });
 }
 
@@ -2692,6 +2706,7 @@ async function fillAddressFromLocation(btn) {
   btn.lastChild.textContent = 'Standort wird ermittelt …';
   try {
     const pos = await getPosition();
+    rememberFix(pos, btn.dataset.locTarget);
     btn.lastChild.textContent = 'Adresse wird gesucht …';
     const acc = Math.round(pos.coords.accuracy || 0);
     const res = await reverseGeocode(pos.coords.latitude.toFixed(6), pos.coords.longitude.toFixed(6));
@@ -2722,4 +2737,87 @@ async function fillAddressFromLocation(btn) {
 document.addEventListener('click', (ev) => {
   const btn = ev.target.closest && ev.target.closest('.loc-btn');
   if (btn) { ev.preventDefault(); fillAddressFromLocation(btn); }
+});
+
+// ---- v29: Kunde in der Nähe ----
+// Zu jedem Kunden kann sein Standort (lat/lng) im gemeinsamen Kundenstamm gespeichert werden.
+// Gelernt wird nur, wenn vorher einer der Standort-Knöpfe benutzt wurde (kein Orten im Hintergrund):
+// Beim Speichern eines Eintrags bekommt der Kunde den zuletzt ermittelten Standort (max. 30 Min alt,
+// Genauigkeit ≤ 150 m), sofern er noch keinen hat. Im Kundenstamm-Dialog überschreibt ein dort
+// ermittelter Standort einen vorhandenen.
+let lastFix = null; // { lat, lng, acc, ts, target }
+const FIX_MAX_AGE = 30 * 60 * 1000;
+const FIX_MAX_ACC = 150;
+
+function hasGeo(c) { return !!c && typeof c.lat === 'number' && typeof c.lng === 'number'; }
+function sameGeo(a, b) {
+  const ga = hasGeo(a), gb = hasGeo(b);
+  if (!ga && !gb) return true;
+  if (ga !== gb) return false;
+  return Math.abs(a.lat - b.lat) < 1e-6 && Math.abs(a.lng - b.lng) < 1e-6;
+}
+function rememberFix(pos, target) {
+  lastFix = { lat: +pos.coords.latitude.toFixed(6), lng: +pos.coords.longitude.toFixed(6), acc: Math.round(pos.coords.accuracy || 9999), ts: Date.now(), target: target || '' };
+}
+function distanceM(lat1, lng1, lat2, lng2) {
+  const R = 6371000, toR = Math.PI / 180;
+  const dLat = (lat2 - lat1) * toR, dLng = (lng2 - lng1) * toR;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * toR) * Math.cos(lat2 * toR) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+function formatDist(m) { return m < 1000 ? `${Math.max(5, Math.round(m / 5) * 5)} m` : `${(m / 1000).toFixed(1).replace('.', ',')} km`; }
+
+function attachFixToCustomer(name, force) {
+  const key = custKey(name);
+  const c = key ? state.customers[key] : null;
+  if (!c || !lastFix) return false;
+  if (Date.now() - lastFix.ts > FIX_MAX_AGE || lastFix.acc > FIX_MAX_ACC) return false;
+  if (hasGeo(c) && !force) return false;
+  c.lat = lastFix.lat; c.lng = lastFix.lng; c.t = Date.now();
+  saveState();
+  cloudPushCustomer(key);
+  renderCustomerStamm();
+  return true;
+}
+
+async function findNearbyCustomers() {
+  const btn = $('nearCustBtn');
+  if (!btn || btn.classList.contains('busy')) return;
+  btn.classList.add('busy');
+  try {
+    const pos = await getPosition();
+    rememberFix(pos, 'f-customer');
+    const { lat, lng, acc } = lastFix;
+    const radius = Math.min(1000, Math.max(250, acc * 2));
+    const near = Object.values(state.customers).filter(hasGeo)
+      .map(c => ({ c, d: distanceM(lat, lng, c.lat, c.lng) }))
+      .filter(x => x.d <= radius)
+      .sort((a, b) => a.d - b.d)
+      .slice(0, 6);
+    const box = $('customerSuggest');
+    suggestItems = near.map(x => x.c);
+    let html = near.length
+      ? `<div class="suggest-head">Kunden in der Nähe (±${acc} m)</div>` + near.map((x, i) =>
+          `<div class="suggest-item" data-i="${i}"><div class="s-name">${escapeHtml(x.c.name)} <span class="s-dist">${formatDist(x.d)}</span></div>` +
+          (x.c.address ? `<div class="s-addr">${escapeHtml(x.c.address)}</div>` : '') + '</div>').join('')
+      : `<div class="suggest-head">Kein gespeicherter Kunde in der Nähe</div><div class="suggest-note">Kunden wie gewohnt eintippen oder auswählen – beim Speichern merkt sich die App diesen Standort für den Kunden${acc > FIX_MAX_ACC ? ` (dafür ist der Standort mit ±${acc} m gerade zu ungenau)` : ''}.</div>`;
+    box.innerHTML = html;
+    box.classList.add('show');
+    clearTimeout(nearHideTimer);
+    nearHideTimer = setTimeout(() => { if (document.activeElement !== $('f-customer')) hideSuggest(); }, 15000);
+  } catch (err) {
+    const code = err && err.code;
+    if (code === 1) showToast('Standort nicht erlaubt. iPhone: Einstellungen → Datenschutz → Ortungsdienste → Safari-Websites → „Beim Verwenden“.', 7000);
+    else if (code === 'nogeo') showToast('Dieses Gerät unterstützt keine Standortabfrage.');
+    else showToast('Standort konnte nicht ermittelt werden – im Freien erneut versuchen.', 5000);
+  } finally {
+    btn.classList.remove('busy');
+  }
+}
+let nearHideTimer = null;
+document.addEventListener('click', (ev) => {
+  if (ev.target.closest && ev.target.closest('#nearCustBtn')) { ev.preventDefault(); findNearbyCustomers(); return; }
+  // Liste „in der Nähe“ schließen, wenn außerhalb getippt wird
+  const box = $('customerSuggest');
+  if (box && box.classList.contains('show') && !ev.target.closest('.cust-wrap') && document.activeElement !== $('f-customer')) hideSuggest();
 });
