@@ -12,10 +12,12 @@ function loadState() {
     if (raw) {
       const s = JSON.parse(raw);
       if (!s.archive) s.archive = []; // Migration für ältere gespeicherte Daten
+      if (!s.customers) s.customers = {};
+      if (!s.customerDeleted) s.customerDeleted = {}; // v27: gelöschte/umbenannte Kunden (Schlüssel -> Zeitpunkt)
       return s;
     }
   } catch (e) { /* ignore */ }
-  return { entries: [], customers: {}, employeeName: '', archive: [] };
+  return { entries: [], customers: {}, customerDeleted: {}, employeeName: '', archive: [] };
 }
 
 function saveState() {
@@ -1180,12 +1182,12 @@ $('editModalBackdrop').addEventListener('click', (e) => {
 // ---------- Toast ----------
 
 let toastTimer = null;
-function showToast(msg) {
+function showToast(msg, ms) {
   const t = $('toast');
   t.textContent = msg;
   t.classList.add('show');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.remove('show'), 2400);
+  toastTimer = setTimeout(() => t.classList.remove('show'), ms || 2400);
 }
 
 // ---------- PDF Export ----------
@@ -1712,42 +1714,73 @@ function drawEntryRow(page, font, row, entry, dailyTotalHours_, isLastOfDay) {
 // werden muss — Home-Bildschirm-Icons auf iOS haben teils ihren eigenen, isolierten
 // Speicher, der beim Löschen/Neuanlegen des Icons verloren geht.
 
+function backupStats(st) {
+  const active = (st.entries || []).filter(Boolean);
+  const archived = (st.archive || []).flatMap(b => (b && b.entries) || []).filter(Boolean);
+  const all = [...active, ...archived];
+  return {
+    active: active.length,
+    batches: (st.archive || []).length,
+    archived: archived.length,
+    total: all.length,
+    vacation: all.filter(isVacation).length,
+    customers: Object.keys(st.customers || {}).length
+  };
+}
+
+function statsText(x) {
+  return `${x.total} ${x.total === 1 ? 'Eintrag' : 'Einträge'} (${x.active} offen, ${x.archived} im Archiv in ${x.batches} ${x.batches === 1 ? 'Export' : 'Exporten'}), davon ${x.vacation} Urlaub · ${x.customers} Kunden`;
+}
+
 function exportDataBackup() {
   const backup = {
     type: 'stundenzettel-backup',
-    version: 1,
+    version: 2,
     exportedAt: new Date().toISOString(),
     state: {
       entries: state.entries,
       archive: state.archive,
       customers: state.customers,
+      customerDeleted: state.customerDeleted || {},
       employeeName: state.employeeName
     }
   };
+  const st = backupStats(backup.state);
   const json = JSON.stringify(backup, null, 2);
   const blob = new Blob([json], { type: 'application/json' });
   const fname = `Stundenzettel_Sicherung_${new Date().toISOString().slice(0, 10)}.json`;
   const url = URL.createObjectURL(blob);
+  const doneMsg = `Sicherung enthält ${statsText(st)}.`;
 
   const fallbackDownload = () => {
     const a = document.createElement('a');
     a.href = url; a.download = fname;
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 5000);
-    showToast('Sicherung wurde heruntergeladen.');
+    showToast(doneMsg, 6000);
   };
 
   const file = new File([blob], fname, { type: 'application/json' });
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
     // Bewusst OHNE "title" — siehe Hinweis bei exportPdf() weiter oben.
     navigator.share({ files: [file] })
-      .then(() => showToast('Sicherung geteilt/gespeichert.'))
+      .then(() => showToast(doneMsg, 6000))
       .catch(() => fallbackDownload());
   } else {
     fallbackDownload();
   }
 }
 
+// Inhaltlicher Fingerabdruck eines Eintrags — erkennt doppelte Einträge auch dann,
+// wenn sie (z. B. nach erneuter Eingabe) eine andere ID haben.
+function entrySignature(e) {
+  if (isVacation(e)) return `u|${e.date}|${e.dateEnd || e.date}`;
+  return [e.date, custKey(e.customer), e.timeMode, e.start || '', e.end || '', e.durationHours || '', e.breakMinutes || 0, (e.desc || '').trim().toLowerCase()].join('|');
+}
+
+// Sicherung einspielen (v27): Es wird NIE etwas gelöscht oder überschrieben. Jeder Eintrag der
+// Sicherung, der in der App fehlt, wird ergänzt — auch in Exporten (Archiv), die es in der App
+// schon gibt. Danach wird geprüft, ob wirklich alle Einträge der Sicherung vorhanden sind.
 function importDataBackup(file) {
   const reader = new FileReader();
   reader.onload = () => {
@@ -1761,36 +1794,65 @@ function importDataBackup(file) {
       showToast('Das ist keine gültige Stundenzettel-Sicherungsdatei.');
       return;
     }
+    const inStats = backupStats(incoming);
+    const when = data.exportedAt ? new Date(data.exportedAt).toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' }) : 'unbekannt';
+    if (!confirm(`Sicherung vom ${when}\n\nInhalt: ${statsText(inStats)}.\n\nFehlende Einträge und Kunden werden ergänzt. In der App wird nichts gelöscht oder überschrieben. Fortfahren?`)) return;
 
-    const hasExisting = state.entries.length > 0 || state.archive.length > 0;
-    if (hasExisting) {
-      const ok = confirm('Es sind bereits Einträge vorhanden. Die Sicherung wird zu den bestehenden Einträgen hinzugefügt (nichts wird überschrieben oder gelöscht). Fortfahren?');
-      if (!ok) return;
-    }
+    if (!state.customerDeleted) state.customerDeleted = {};
+    const allLocal = () => [...state.entries, ...state.archive.flatMap(b => b.entries)];
+    const ids = new Set(allLocal().map(e => e.id));
+    const sigs = new Set(allLocal().map(entrySignature));
+    const isPresent = (e) => ids.has(e.id) || sigs.has(entrySignature(e));
+    const remember = (e) => { ids.add(e.id); sigs.add(entrySignature(e)); };
 
-    const existingIds = new Set([
-      ...state.entries.map(e => e.id),
-      ...state.archive.flatMap(b => b.entries.map(e => e.id))
-    ]);
+    let addedActive = 0, addedArchived = 0, addedVacation = 0, already = 0;
 
-    const newEntries = (incoming.entries || []).filter(e => e && e.id && !existingIds.has(e.id));
-    state.entries.push(...newEntries);
-    newEntries.forEach(e => existingIds.add(e.id));
-
-    const existingBatchIds = new Set(state.archive.map(b => b.id));
-    let importedArchiveEntries = 0;
-    (incoming.archive || []).forEach(batch => {
-      if (!batch || existingBatchIds.has(batch.id)) return;
-      const filteredEntries = (batch.entries || []).filter(e => e && e.id && !existingIds.has(e.id));
-      if (filteredEntries.length) {
-        state.archive.push({ ...batch, entries: filteredEntries });
-        filteredEntries.forEach(e => existingIds.add(e.id));
-        importedArchiveEntries += filteredEntries.length;
-      }
+    (incoming.entries || []).forEach(e => {
+      if (!e || !e.date) return;
+      if (isPresent(e)) { already++; return; }
+      const copy = { ...e, id: e.id || uid() };
+      state.entries.push(copy); remember(copy);
+      addedActive++; if (isVacation(copy)) addedVacation++;
     });
 
+    (incoming.archive || []).forEach(batch => {
+      if (!batch) return;
+      const missing = [];
+      (batch.entries || []).forEach(e => {
+        if (!e || !e.date) return;
+        if (isPresent(e)) { already++; return; }
+        const copy = { ...e, id: e.id || uid() };
+        missing.push(copy); remember(copy);
+        if (isVacation(copy)) addedVacation++;
+      });
+      if (!missing.length) return;
+      addedArchived += missing.length;
+      const local = batch.id ? state.archive.find(b => b.id === batch.id) : null;
+      if (local) local.entries.push(...missing); // Export existiert schon -> fehlende Einträge ergänzen
+      else state.archive.push({ ...batch, id: batch.id || uid(), entries: missing });
+    });
+    state.archive.sort((a, b) => String(b.exportedAt || '').localeCompare(String(a.exportedAt || '')));
+
+    // Kunden: gelöschte/umbenannte Kunden nicht wiederbeleben, sonst gilt der neuere Stand.
+    const inDeleted = incoming.customerDeleted || {};
+    Object.entries(inDeleted).forEach(([key, t]) => {
+      if ((state.customerDeleted[key] || 0) < t) state.customerDeleted[key] = t;
+      const cur = state.customers[key];
+      if (cur && (cur.t || 0) < t) { delete state.customers[key]; cloudPushCustomer(key, true); }
+    });
+    let addedCust = 0;
     Object.entries(incoming.customers || {}).forEach(([key, val]) => {
-      if (!state.customers[key]) state.customers[key] = val;
+      if (!val || !val.name) return;
+      const vt = val.t || 0;
+      if ((state.customerDeleted[key] || 0) > vt) return;
+      const r = cloud.remote[key];
+      if (r && r.del && (r.t || 0) >= vt) return;
+      const cur = state.customers[key];
+      if (!cur) { state.customers[key] = { name: val.name, address: val.address || '', t: vt }; addedCust++; cloudPushCustomer(key); }
+      else if (vt > (cur.t || 0) && (val.name !== cur.name || (val.address && val.address !== cur.address))) {
+        state.customers[key] = { name: val.name, address: val.address || cur.address || '', t: vt };
+        cloudPushCustomer(key);
+      }
     });
 
     if (!state.employeeName && incoming.employeeName) state.employeeName = incoming.employeeName;
@@ -1801,7 +1863,16 @@ function importDataBackup(file) {
     refreshCustomerList();
     pushLocalCustomers();
     if ($('f-employee')) $('f-employee').value = state.employeeName || '';
-    showToast(`Sicherung eingespielt: ${newEntries.length} aktive + ${importedArchiveEntries} archivierte Einträge hinzugefügt.`);
+
+    // Gegenprobe: Ist jeder Eintrag der Sicherung jetzt in der App?
+    const notFound = [...(incoming.entries || []), ...(incoming.archive || []).flatMap(b => (b && b.entries) || [])]
+      .filter(e => e && e.date && !isPresent(e));
+    const added = addedActive + addedArchived;
+    let msg = `Sicherung eingespielt.\n\n${added} ${added === 1 ? 'Eintrag' : 'Einträge'} ergänzt (${addedActive} offen, ${addedArchived} im Archiv), davon ${addedVacation} Urlaub.\n${already} waren schon vorhanden.\n${addedCust} Kunden ergänzt.`;
+    msg += notFound.length
+      ? `\n\nACHTUNG: ${notFound.length} Einträge der Sicherung fehlen weiterhin. Bitte die Sicherungsdatei aufheben und melden.`
+      : `\n\nGeprüft: Alle ${inStats.total} Einträge der Sicherung sind in der App vorhanden.`;
+    alert(msg);
   };
   reader.readAsText(file);
 }
@@ -1864,6 +1935,7 @@ function upsertCustomer(name, address) {
   let changed = false;
   if (!cur) {
     state.customers[key] = { name, address, t: Date.now() };
+    if (state.customerDeleted) delete state.customerDeleted[key];
     changed = true;
   } else if (address && address !== cur.address) {
     cur.address = address;
@@ -1878,8 +1950,14 @@ function upsertCustomer(name, address) {
   return changed;
 }
 
+function markCustomerDeleted(key, t) {
+  if (!state.customerDeleted) state.customerDeleted = {};
+  state.customerDeleted[key] = Math.max(state.customerDeleted[key] || 0, t || Date.now());
+}
+
 function deleteCustomer(key) {
   delete state.customers[key];
+  markCustomerDeleted(key);
   saveState();
   refreshCustomerList();
   cloudPushCustomer(key, true);
@@ -2065,7 +2143,9 @@ function renameCustomer(oldKey, newName, address) {
     } else {
       state.customers[newKey] = { name: newName, address: address || c.address || '', t: Date.now() };
     }
+    if (state.customerDeleted) delete state.customerDeleted[newKey];
     delete state.customers[oldKey];
+    markCustomerDeleted(oldKey);
   }
   let moved = 0;
   state.entries.forEach(e => {
@@ -2339,14 +2419,16 @@ function cloudPushCustomer(key, deleted) {
   if (!cloud.user || !cloud.db) return;
   const by = cloud.user.email || cloud.user.uid;
   if (deleted) {
-    cloud.remote[key] = { address: '', del: true };
-    customerDocRef(key).set({ key, del: true, t: Date.now(), by }, { merge: true }).catch(cloudError);
+    const t = (state.customerDeleted && state.customerDeleted[key]) || Date.now();
+    cloud.remote[key] = { address: '', del: true, t };
+    customerDocRef(key).set({ key, del: true, t, by }, { merge: true }).catch(cloudError);
     return;
   }
   const c = state.customers[key];
   if (!c) return;
-  cloud.remote[key] = { address: c.address || '', del: false };
-  customerDocRef(key).set({ key, name: c.name, address: c.address || '', t: c.t || Date.now(), by, del: false }, { merge: true }).catch(cloudError);
+  if (!c.t) { c.t = Date.now(); saveState(); }
+  cloud.remote[key] = { address: c.address || '', del: false, t: c.t, name: c.name };
+  customerDocRef(key).set({ key, name: c.name, address: c.address || '', t: c.t, by, del: false }, { merge: true }).catch(cloudError);
 }
 
 function startCustomerSync() {
@@ -2361,13 +2443,22 @@ function startCustomerSync() {
       let key = x.key;
       if (!key) { try { key = decodeURIComponent(ch.doc.id); } catch (e) { key = ch.doc.id; } }
       if (ch.type === 'removed') { delete cloud.remote[key]; return; }
-      cloud.remote[key] = { address: x.address || '', del: !!x.del };
+      const xt = x.t || 0;
+      cloud.remote[key] = { address: x.address || '', del: !!x.del, t: xt, name: x.name || '' };
+      if (!state.customerDeleted) state.customerDeleted = {};
       if (x.del) {
-        if (state.customers[key]) { delete state.customers[key]; changed = true; }
+        const loc = state.customers[key];
+        if (loc && (loc.t || 0) > xt) { cloudPushCustomer(key); return; } // lokal danach neu angelegt
+        if (loc) { delete state.customers[key]; changed = true; }
+        if ((state.customerDeleted[key] || 0) < xt) { state.customerDeleted[key] = xt; changed = true; }
         return;
       }
       if (!x.name) return;
+      // Lokal (auch ohne Anmeldung) später gelöscht/umbenannt -> Löschung hochladen statt wiederbeleben
+      if ((state.customerDeleted[key] || 0) > xt) { cloudPushCustomer(key, true); return; }
       const cur = state.customers[key];
+      // Lokal neuer geändert (z. B. umbenannt, als man nicht angemeldet war) -> lokalen Stand hochladen
+      if (cur && (cur.t || 0) > xt && (cur.name !== x.name || (cur.address || '') !== (x.address || ''))) { cloudPushCustomer(key); return; }
       // Eine lokal vorhandene Adresse nicht durch eine leere aus der Cloud löschen (sie wird hochgeladen)
       const rec = { name: x.name, address: x.address || (cur && cur.address) || '', t: x.t || 0 };
       if (!cur || cur.name !== rec.name || cur.address !== rec.address) { state.customers[key] = rec; changed = true; }
@@ -2407,7 +2498,7 @@ function pushLocalCustomers() {
     const batch = cloud.db.batch();
     ops.slice(i, i + 400).forEach(o => {
       batch.set(customerDocRef(o.key), o.data, { merge: true });
-      cloud.remote[o.key] = { address: o.data.address || '', del: false };
+      cloud.remote[o.key] = { ...(cloud.remote[o.key] || {}), address: o.data.address || (cloud.remote[o.key] || {}).address || '', del: false, t: o.data.t };
     });
     batch.commit().catch(cloudError);
   }
