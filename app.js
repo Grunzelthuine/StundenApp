@@ -1979,7 +1979,7 @@ function renderCustomerStamm() {
         <div class="customer">${escapeHtml(c.name)}</div>
         <div class="desc">${c.address ? escapeHtml(c.address) : '<span style="color:var(--red)">Adresse fehlt</span>'}</div>
       </div>
-      <div class="actions"><button class="icon-btn edit" title="Adresse bearbeiten">✏️</button></div>`;
+      <div class="actions"><button class="icon-btn edit" title="Name/Adresse bearbeiten">✏️</button></div>`;
     item.querySelector('.edit').addEventListener('click', () => openCustomerModal(c.key));
     wrap.appendChild(item);
   });
@@ -1995,6 +1995,53 @@ function refreshCustomerList() {
   renderCustomerStamm();
 }
 
+// Kunde umbenennen (z. B. Tippfehler). Ändert sich nur die Groß-/Kleinschreibung, bleibt der
+// Schlüssel gleich. Sonst: neuer Eintrag unter neuem Schlüssel, alter wird (für alle) gelöscht.
+// Gibt es den neuen Namen schon, werden beide zusammengeführt (vorhandene Adresse bleibt,
+// fehlende wird ergänzt). Noch nicht exportierte Einträge werden mit umbenannt.
+function renameCustomer(oldKey, newName, address) {
+  const c = state.customers[oldKey];
+  newName = (newName || '').trim();
+  address = (address || '').trim();
+  if (!c || !newName) return { ok: false };
+  const newKey = custKey(newName);
+  const oldName = c.name;
+  if (newKey === oldKey) {
+    c.name = newName;
+    if (address) c.address = address;
+    c.t = Date.now();
+  } else {
+    const target = state.customers[newKey];
+    if (target) {
+      if (!target.address && (address || c.address)) target.address = address || c.address;
+      target.t = Date.now();
+    } else {
+      state.customers[newKey] = { name: newName, address: address || c.address || '', t: Date.now() };
+    }
+    delete state.customers[oldKey];
+  }
+  let moved = 0;
+  state.entries.forEach(e => {
+    if (!isVacation(e) && custKey(e.customer) === oldKey) {
+      e.customer = state.customers[newKey].name;
+      if (!e.address && state.customers[newKey].address) e.address = state.customers[newKey].address;
+      moved++;
+    }
+  });
+  saveState();
+  refreshCustomerList();
+  renderEntries();
+  cloudPushCustomer(newKey);
+  if (newKey !== oldKey) cloudPushCustomer(oldKey, true);
+  if ($('f-customer') && custKey($('f-customer').value) === oldKey) {
+    $('f-customer').value = state.customers[newKey].name;
+    addrForKey = null;
+    onCustomerInput();
+    hideSuggest();
+  }
+  return { ok: true, moved, oldName, merged: newKey !== oldKey && !!state.customers[newKey] };
+}
+
 function openCustomerModal(key) {
   const c = state.customers[key];
   if (!c) return;
@@ -2002,10 +2049,10 @@ function openCustomerModal(key) {
   modal.innerHTML = `
     <h3>Kunde im Kundenstamm</h3>
     <label>Name</label>
-    <div style="font-weight:600; font-size:16px;">${escapeHtml(c.name)}</div>
+    <input type="text" id="mc-name" value="${escapeHtml(c.name)}" autocomplete="off">
     <label>Adresse (Straße/Ort, Telefon)</label>
     <textarea id="mc-address" rows="3">${escapeHtml(c.address || '')}</textarea>
-    <div class="hint">Änderungen gelten für alle Kollegen. Tippfehler im Namen: Kunde löschen und neu anlegen.</div>
+    <div class="hint">Änderungen gelten${cloud.user ? ' für alle Kollegen' : ''}. Bei einem neuen Namen werden auch noch nicht exportierte Einträge dieses Kunden umbenannt; bereits exportierte bleiben unverändert.</div>
     <div class="btn-block-row" style="margin-top:16px;">
       <button class="btn btn-secondary" id="mc-cancel">Abbrechen</button>
       <button class="btn btn-primary" id="mc-save">Speichern</button>
@@ -2013,11 +2060,22 @@ function openCustomerModal(key) {
     <button class="btn btn-danger" id="mc-del">Kunde löschen</button>`;
   modal.querySelector('#mc-cancel').addEventListener('click', closeEditModal);
   modal.querySelector('#mc-save').addEventListener('click', () => {
+    const newName = modal.querySelector('#mc-name').value.trim();
     const a = modal.querySelector('#mc-address').value.trim();
-    if (!a) { showToast('Bitte eine Adresse eintragen (oder Abbrechen).'); return; }
-    upsertCustomer(c.name, a);
+    if (!newName) { showToast('Bitte einen Namen eintragen.'); return; }
+    if (!a && c.address) { showToast('Adresse darf nicht leer sein (oder Abbrechen).'); return; }
+    if (newName === c.name) {
+      if (a) upsertCustomer(c.name, a);
+      closeEditModal();
+      showToast('Kundenstamm aktualisiert.');
+      return;
+    }
+    const newKey = custKey(newName);
+    const existing = newKey !== key ? state.customers[newKey] : null;
+    if (existing && !confirm(`„${existing.name}“ gibt es schon im Kundenstamm. „${c.name}“ damit zusammenführen?${existing.address ? '' : ' Die Adresse wird übernommen.'}`)) return;
+    const res = renameCustomer(key, newName, a);
     closeEditModal();
-    showToast('Kundenstamm aktualisiert.');
+    showToast(`${existing ? 'Zusammengeführt' : 'Umbenannt'}: „${res.oldName}“ → „${state.customers[newKey].name}“${res.moved ? ` (${res.moved === 1 ? '1 offener Eintrag' : res.moved + ' offene Einträge'} angepasst)` : ''}.`);
   });
   modal.querySelector('#mc-del').addEventListener('click', () => {
     if (!confirm(`„${c.name}“ aus dem Kundenstamm löschen?${cloud.user ? ' Das gilt für alle Kollegen.' : ''}`)) return;
@@ -2324,8 +2382,38 @@ function authErrorText(err) {
   }
 }
 
+// ----- Seite "Einstellungen & Sicherung" (eigene Ansicht, per #einstellungen erreichbar) -----
+let mainScrollY = 0;
+function applyView() {
+  const settings = location.hash === '#einstellungen';
+  if (!settings) settingsPushed = false;
+  if (settings && $('settingsView').style.display !== 'none') return;
+  if (!settings && $('mainView').style.display !== 'none') return;
+  if (settings) mainScrollY = window.scrollY;
+  $('mainView').style.display = settings ? 'none' : 'block';
+  $('settingsView').style.display = settings ? 'block' : 'none';
+  hideSuggest();
+  closeEditModal();
+  window.scrollTo(0, settings ? 0 : mainScrollY);
+}
+let settingsPushed = false; // true = Einstellungen wurden per Button geöffnet (Verlaufseintrag vorhanden)
+function openSettings() {
+  if (location.hash !== '#einstellungen') { settingsPushed = true; location.hash = '#einstellungen'; }
+  else applyView();
+}
+function closeSettings() {
+  if (settingsPushed) { settingsPushed = false; history.back(); return; }
+  // z. B. nach Neuladen auf der Einstellungsseite: ohne Verlauf direkt zurückschalten
+  history.replaceState(null, '', location.pathname + location.search);
+  applyView();
+}
+
 function initSyncUi() {
-  $('syncBtn').addEventListener('click', () => $('syncCard').scrollIntoView({ behavior: 'smooth', block: 'start' }));
+  $('syncBtn').addEventListener('click', openSettings);
+  $('openSettingsBtn').addEventListener('click', openSettings);
+  $('closeSettingsBtn').addEventListener('click', closeSettings);
+  window.addEventListener('hashchange', applyView);
+  applyView();
   $('loginForm').addEventListener('submit', async (ev) => {
     ev.preventDefault();
     if (!cloud.auth) { showToast('Cloud-Funktion nicht verfügbar.'); return; }
