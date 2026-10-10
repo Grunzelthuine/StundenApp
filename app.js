@@ -409,7 +409,7 @@ function parseFreeText(rawText) {
 }
 
 function applyFreeTextResult(result) {
-  if (result.date) { $('f-date').value = result.date; }
+  if (result.date) { $('f-date').value = result.date; dateTouched = result.date !== todayISO(); }
   updateTimeDefaults();
 
   if (result.timeMode === 'range') {
@@ -419,12 +419,14 @@ function applyFreeTextResult(result) {
     $('durationFields').style.display = 'none';
     setStartSliderHHMM(result.start);
     setEndSliderHHMM(result.end);
+    timeTouched = true;
   } else if (result.timeMode === 'duration') {
     timeMode = 'duration';
     document.querySelectorAll('#timeModeSeg button').forEach(b => b.classList.toggle('active', b.dataset.mode === 'duration'));
     $('rangeFields').style.display = 'none';
     $('durationFields').style.display = 'block';
     $('f-duration').value = result.durationHours;
+    timeTouched = true;
   }
 
   if (result.breakMinutes != null) {
@@ -483,12 +485,15 @@ function roundUpToQuarterIndex(date) {
 }
 
 function lastEndTimeForDate(dateISO) {
-  // Sucht rückwärts den zuletzt erfassten Eintrag desselben Datums mit Uhrzeit-von-bis
-  for (let i = state.entries.length - 1; i >= 0; i--) {
-    const e = state.entries[i];
-    if (e.date === dateISO && e.timeMode === 'range' && e.end) return e.end;
-  }
-  return null;
+  // Spätestes "Bis" aller Einträge dieses Datums mit Uhrzeit-von-bis – auch bereits exportierte
+  // (Archiv), damit nach einem Export am selben Tag trotzdem lückenlos weitergemacht wird.
+  let latest = null;
+  [...state.entries, ...state.archive.flatMap(b => b.entries)].forEach(e => {
+    if (e.date === dateISO && e.timeMode === 'range' && e.end && !isVacation(e)) {
+      if (!latest || parseHM(e.end) > parseHM(latest)) latest = e.end;
+    }
+  });
+  return latest;
 }
 
 function setStartSliderHHMM(hhmm) {
@@ -624,12 +629,53 @@ function clampTimeSliders(startEl, endEl, movedEl) {
   return { startVal, endVal };
 }
 
+// Hat der Nutzer die Zeiten (oder das Datum) für den aktuellen Eintrag schon selbst angefasst?
+// Solange nicht, werden Von/Bis automatisch aktuell gehalten.
+let timeTouched = false;
+let dateTouched = false;
+
 function updateTimeDefaults() {
   const dateVal = $('f-date').value || todayISO();
   const lastEnd = lastEndTimeForDate(dateVal);
-  setStartSliderHHMM(lastEnd || '07:30');
-  setEndSliderHHMM(quarterIndexToHHMM(roundUpToQuarterIndex(new Date())));
+  const startHHMM = lastEnd || '07:30';
+  setStartSliderHHMM(startHHMM);
+  // Bis = jetzt, auf die nächste Viertelstunde aufgerundet – mindestens 15 Min nach "Von"
+  let endIdx = roundUpToQuarterIndex(new Date());
+  const startMin = parseHM(startHHMM);
+  if (endIdx * 15 <= startMin) endIdx = Math.min(QUARTER_MAX, Math.floor(startMin / 15) + 1);
+  let endHHMM = quarterIndexToHHMM(endIdx);
+  if (parseHM(endHHMM) <= startMin) endHHMM = '23:59';
+  setEndSliderHHMM(endHHMM);
+  timeTouched = false;
   updateComputedHint();
+}
+
+// Beim Zurückkehren in die App (iPhone hält die PWA oft stundenlang im Speicher, ohne neu zu
+// laden) und jede Minute: Datum/Zeiten auffrischen, sofern noch nichts von Hand geändert wurde.
+function refreshTimeDefaultsIfUntouched() {
+  if (document.visibilityState === 'hidden') return;
+  if ($('editModalBackdrop').classList.contains('show')) return;
+  if (!dateTouched && $('f-date').value !== todayISO()) $('f-date').value = todayISO();
+  if (!timeTouched) updateTimeDefaults();
+}
+
+function initAutoTimeRefresh() {
+  const markTime = () => { timeTouched = true; };
+  ['f-start', 'f-end', 'f-duration', 'f-break-custom'].forEach(id => $(id).addEventListener('input', markTime));
+  $('f-start-label').querySelector('input').addEventListener('change', markTime);
+  $('f-end-label').querySelector('input').addEventListener('change', markTime);
+  $('timeModeSeg').addEventListener('click', markTime);
+  const markDate = () => { dateTouched = true; };
+  $('f-date').addEventListener('change', markDate);
+  $('datePrevBtn').addEventListener('click', markDate);
+  $('dateNextBtn').addEventListener('click', markDate);
+  document.querySelectorAll('[data-date-shift]').forEach(b => b.addEventListener('click', () => {
+    dateTouched = b.dataset.dateShift !== '0'; // "Heute" = wieder automatisch
+  }));
+  document.addEventListener('visibilitychange', refreshTimeDefaultsIfUntouched);
+  window.addEventListener('pageshow', refreshTimeDefaultsIfUntouched);
+  window.addEventListener('focus', refreshTimeDefaultsIfUntouched);
+  setInterval(refreshTimeDefaultsIfUntouched, 60000);
 }
 
 function initForm() {
@@ -754,6 +800,7 @@ function initForm() {
   });
 
   initVacationForm();
+  initAutoTimeRefresh();
   updateComputedHint();
 }
 
