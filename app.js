@@ -1025,8 +1025,8 @@ function renderEntries() {
     const total = dailyTotalHours(g.entries);
     const gDiv = document.createElement('div');
     gDiv.className = 'entry-group';
-    const groupLabel = g.vacation ? '🏖️ ' + entryDateLabel(g.entries[0], true) : formatDateLong(g.date);
-    gDiv.innerHTML = `<div class="entry-group-date"><span>${groupLabel}</span><span class="total">Gesamt: ${formatHoursDE(total)} Std</span></div>`;
+    const groupLabel = g.vacation ? entryDateLabel(g.entries[0], true) : formatDateLong(g.date);
+    gDiv.innerHTML = `<div class="entry-group-date"><span>${g.vacation ? '<svg class="ic" style="width:16px;height:16px;color:var(--green);margin:-2px 6px 0 0" aria-hidden="true"><use href="#i-sun"/></svg>' : ''}${groupLabel}</span><span class="total">Gesamt: ${formatHoursDE(total)} Std</span></div>`;
     const list = document.createElement('div');
     g.entries.forEach(e => {
       const mins = computeNetMinutes(e);
@@ -1040,8 +1040,8 @@ function renderEntries() {
           <div class="meta">${timeLabel}${e.breakMinutes ? ` · ${e.breakMinutes} Min Pause` : ''} · ${formatHoursDE(minutesToHoursDecimal(mins))} Std</div>
         </div>
         <div class="actions">
-          <button class="icon-btn edit" title="Bearbeiten">✏️</button>
-          <button class="icon-btn del" title="Löschen">🗑️</button>
+          <button class="icon-btn edit" title="Bearbeiten" aria-label="Bearbeiten"><svg class="ic" aria-hidden="true"><use href="#i-edit"/></svg></button>
+          <button class="icon-btn del" title="Löschen" aria-label="Löschen"><svg class="ic" aria-hidden="true"><use href="#i-trash"/></svg></button>
         </div>`;
       item.querySelector('.edit').addEventListener('click', () => isVacation(e) ? openVacationEditModal(e) : openEditModal(e.id));
       item.querySelector('.del').addEventListener('click', () => deleteEntry(e.id));
@@ -1508,8 +1508,8 @@ function renderArchiveMonthView() {
         const dayTotal = byDate[key].reduce((s, mm) => s + minutesToHoursDecimal(computeNetMinutes(mm.entry)), 0);
         const gDiv = document.createElement('div');
         gDiv.className = 'entry-group';
-        const label = isVacation(first) ? '🏖️ ' + entryDateLabel(first, true) : formatDateLong(first.date);
-        gDiv.innerHTML = `<div class="entry-group-date"><span>${label}</span><span class="total">Gesamt: ${formatHoursDE(dayTotal)} Std</span></div>`;
+        const label = isVacation(first) ? entryDateLabel(first, true) : formatDateLong(first.date);
+        gDiv.innerHTML = `<div class="entry-group-date"><span>${isVacation(first) ? '<svg class="ic" style="width:16px;height:16px;color:var(--green);margin:-2px 6px 0 0" aria-hidden="true"><use href="#i-sun"/></svg>' : ''}${label}</span><span class="total">Gesamt: ${formatHoursDE(dayTotal)} Std</span></div>`;
         const list = document.createElement('div');
         byDate[key].forEach(({ entry: e, batchId }) => {
           const mins = computeNetMinutes(e);
@@ -1523,7 +1523,7 @@ function renderArchiveMonthView() {
               <div class="meta">${timeLabel}${e.breakMinutes ? ` · ${e.breakMinutes} Min Pause` : ''} · ${formatHoursDE(minutesToHoursDecimal(mins))} Std</div>
             </div>
             <div class="actions">
-              <button class="icon-btn restore-one" title="Zurück in aktive Liste">↩️</button>
+              <button class="icon-btn restore-one" title="Zurück in aktive Liste" aria-label="Zurück in aktive Liste"><svg class="ic" aria-hidden="true"><use href="#i-restore"/></svg></button>
             </div>`;
           item.querySelector('.restore-one').addEventListener('click', () => {
             restoreEntryFromArchive(batchId, e.id); // ruft renderArchive() auf, das auch diese Ansicht neu zeichnet
@@ -1601,7 +1601,7 @@ function renderArchive() {
           <div class="meta">${timeLabel}${e.breakMinutes ? ` · ${e.breakMinutes} Min Pause` : ''} · ${formatHoursDE(minutesToHoursDecimal(mins))} Std</div>
         </div>
         <div class="actions">
-          <button class="icon-btn restore-one" title="Zurück in aktive Liste">↩️</button>
+          <button class="icon-btn restore-one" title="Zurück in aktive Liste" aria-label="Zurück in aktive Liste"><svg class="ic" aria-hidden="true"><use href="#i-restore"/></svg></button>
         </div>`;
       item.querySelector('.restore-one').addEventListener('click', () => restoreEntryFromArchive(batch.id, e.id));
       listEl.appendChild(item);
@@ -1926,7 +1926,7 @@ function renderSuggest() {
   let html = matches.map((c, i) =>
     `<div class="suggest-item" data-i="${i}"><div class="s-name">${escapeHtml(c.name)}</div>` +
     (c.address ? `<div class="s-addr">${escapeHtml(c.address)}</div>` : '') + '</div>').join('');
-  if (!exact) html += `<div class="suggest-item s-new" data-new="1">➕ „${escapeHtml(q)}“ als neuen Kunden übernehmen</div>`;
+  if (!exact) html += `<div class="suggest-item s-new" data-new="1"><svg class="ic" aria-hidden="true"><use href="#i-plus"/></svg>„${escapeHtml(q)}“ als neuen Kunden übernehmen</div>`;
   box.innerHTML = html;
   box.classList.add('show');
 }
@@ -2026,7 +2026,7 @@ function renderCustomerStamm() {
         <div class="customer">${escapeHtml(c.name)}</div>
         <div class="desc">${c.address ? escapeHtml(c.address) : '<span style="color:var(--red)">Adresse fehlt</span>'}</div>
       </div>
-      <div class="actions"><button class="icon-btn edit" title="Name/Adresse bearbeiten">✏️</button></div>`;
+      <div class="actions"><button class="icon-btn edit" title="Name/Adresse bearbeiten" aria-label="Name/Adresse bearbeiten"><svg class="ic" aria-hidden="true"><use href="#i-edit"/></svg></button></div>`;
     item.querySelector('.edit').addEventListener('click', () => openCustomerModal(c.key));
     wrap.appendChild(item);
   });
@@ -2144,7 +2144,7 @@ function aufmassPickerHtml(p) {
   return `<div id="${p}-nrBox" style="display:none;">
     <label for="${p}-nrSel" style="display:flex; justify-content:space-between; align-items:center;">
       <span>Aufmaßnummer</span>
-      <button type="button" class="icon-btn" id="${p}-nrReload" title="Liste aktualisieren" style="padding:0 4px;">🔄</button>
+      <button type="button" class="icon-btn" id="${p}-nrReload" title="Liste aktualisieren" aria-label="Liste aktualisieren" style="padding:0 4px; color:var(--orange-ink);"><svg class="ic" aria-hidden="true"><use href="#i-refresh"/></svg></button>
     </label>
     <select id="${p}-nrSel"></select>
     <input type="text" id="${p}-nrFree" placeholder="Nummer eintippen, z. B. SB-26-003" autocomplete="off" autocapitalize="characters" style="display:none; margin-top:8px;">
@@ -2185,7 +2185,7 @@ function bindAufmassPicker(p) {
     if (sel.value === '__free__') free.focus();
   });
   $(p + '-nrReload').addEventListener('click', async () => {
-    if (!cloud.user) { showToast('Bitte zuerst anmelden (☁️ oben).'); return; }
+    if (!cloud.user) { showToast('Bitte zuerst anmelden (Wolken-Symbol oben).'); return; }
     await loadAufmassNummern(true);
     showToast(cloud.aufmassError ? 'Aufmaßnummern konnten nicht geladen werden.' : `${cloud.aufmass.length} Aufmaßnummern geladen.`);
   });
@@ -2204,12 +2204,12 @@ function refreshAufmassPicker(p, customerName) {
   let html = '<option value="">– Nummer wählen –</option>';
   if (match.length) html += `<optgroup label="Passend zu „${escapeHtml(customerName.trim())}“">${match.map(opt).join('')}</optgroup>`;
   if (rest.length) html += `<optgroup label="${match.length ? 'Weitere' : 'Neueste zuerst'}">${rest.map(opt).join('')}</optgroup>`;
-  html += '<option value="__free__">✏️ Andere Nummer eintippen …</option>';
+  html += '<option value="__free__">Andere Nummer eintippen …</option>';
   sel.innerHTML = html;
   setAufmassNr(p, cur);
 
   const hint = $(p + '-nrHint');
-  if (!cloud.user && !list.length) hint.textContent = 'Nicht angemeldet – Nummer eintippen oder oben unter ☁️ anmelden, dann erscheint die Auswahl aus der Aufmaßsoftware.';
+  if (!cloud.user && !list.length) hint.textContent = 'Nicht angemeldet – Nummer eintippen oder oben über das Wolken-Symbol anmelden, dann erscheint die Auswahl aus der Aufmaßsoftware.';
   else if (!cloud.user) hint.textContent = `Nicht angemeldet – ${list.length} Nummern vom letzten Abgleich.`;
   else if (cloud.aufmassError && !list.length) hint.textContent = 'Aufmaßnummern konnten nicht geladen werden (offline?) – Nummer bitte eintippen.';
   else if (!list.length) hint.textContent = 'Keine Aufmaßnummern gefunden (in der Aufmaßsoftware muss zuerst ein PDF erstellt sein) – Nummer bitte eintippen.';
@@ -2503,8 +2503,8 @@ function updateSyncUI() {
   } else if (!on) {
     lines.push('Nicht angemeldet. Mit demselben Konto wie in der Aufmaßsoftware anmelden, um Aufmaßnummern auszuwählen und den gemeinsamen Kundenstamm zu nutzen. Bis dahin bleiben Kunden nur auf diesem Gerät und werden nach der Anmeldung automatisch abgeglichen.');
   } else {
-    lines.push(`✅ Angemeldet als ${escapeHtml(cloud.user.email || '')}`);
-    if (cloud.permissionDenied) lines.push('<span style="color:var(--red)">⚠️ Gemeinsamer Kundenstamm noch nicht freigeschaltet (Firestore-Regel fehlt) – Kunden bleiben vorerst nur auf diesem Gerät.</span>');
+    lines.push(`<span class="status-ok"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg>Angemeldet als ${escapeHtml(cloud.user.email || '')}</span>`);
+    if (cloud.permissionDenied) lines.push('<span class="status-warn"><svg class="ic" aria-hidden="true"><use href="#i-alert"/></svg><span>Gemeinsamer Kundenstamm noch nicht freigeschaltet (Firestore-Regel fehlt) – Kunden bleiben vorerst nur auf diesem Gerät.</span></span>');
     else lines.push(`Kundenstamm: ${Object.keys(state.customers).length} Kunden${cloud.syncedOnce ? ' (abgeglichen)' : ' (wird abgeglichen …)'}`);
     if (cloud.aufmassError && !cloud.aufmass.length) lines.push('Aufmaßnummern konnten nicht geladen werden.');
     else lines.push(`Aufmaßnummern: ${cloud.aufmass.length} geladen`);
@@ -2520,3 +2520,32 @@ renderEntries();
 renderArchive();
 refreshCustomerList();
 cloudInit();
+
+// ---- Design v25: Schieberegler bis zum Regler orange füllen ----
+(function () {
+  function paint(el) {
+    if (!el || el.type !== 'range') return;
+    const min = parseFloat(el.min) || 0, max = parseFloat(el.max) || 100, v = parseFloat(el.value) || 0;
+    el.style.setProperty('--p', (max > min ? ((v - min) / (max - min)) * 100 : 0) + '%');
+  }
+  try {
+    const desc = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+    if (desc && desc.set) {
+      Object.defineProperty(HTMLInputElement.prototype, 'value', {
+        configurable: true, enumerable: desc.enumerable,
+        get: function () { return desc.get.call(this); },
+        set: function (v) { desc.set.call(this, v); if (this.type === 'range') paint(this); }
+      });
+    }
+  } catch (e) { /* ignore */ }
+  document.addEventListener('input', (ev) => paint(ev.target), true);
+  const paintAll = (root) => (root.querySelectorAll ? root.querySelectorAll('input[type=range]') : []).forEach(paint);
+  const start = () => {
+    paintAll(document);
+    try {
+      new MutationObserver((muts) => muts.forEach(m => m.addedNodes.forEach(n => { if (n.nodeType === 1) { paint(n); paintAll(n); } })))
+        .observe(document.body, { childList: true, subtree: true });
+    } catch (e) { /* ignore */ }
+  };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
+})();
