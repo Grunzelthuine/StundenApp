@@ -783,7 +783,7 @@ function initForm() {
       showToast('Alle Einträge gelöscht.');
     }
   });
-  $('exportBtn').addEventListener('click', exportPdf);
+  $('exportBtn').addEventListener('click', () => exportPdf());
 
   $('f-employee').addEventListener('change', () => {
     state.employeeName = $('f-employee').value.trim();
@@ -1311,8 +1311,50 @@ function wrapTwoLines(font, size, text, maxWidth) {
   return [line1, line2];
 }
 
-async function exportPdf() {
+// v31: Einträge mit „Aufmaß Ja“, aber ohne Aufmaßnummer
+function entriesMissingAufmassNr() {
+  return state.entries.filter(e => !isVacation(e) && e.aufmass === 'ja' && !String(e.aufmassNr || '').trim());
+}
+
+function showMissingAufmassWarning() {
+  const missing = entriesMissingAufmassNr().slice().sort((a, b) => a.date.localeCompare(b.date));
+  const modal = $('editModal');
+  modal.innerHTML = `
+    <h3 style="display:flex; align-items:center; gap:10px;"><span class="ht" style="background:var(--orange-tint); color:var(--orange);"><svg class="ic" aria-hidden="true"><use href="#i-alert"/></svg></span>Aufmaßnummer fehlt</h3>
+    <div class="hint" style="margin-top:0;">Bei ${missing.length === 1 ? 'diesem Eintrag' : `diesen ${missing.length} Einträgen`} ist „Aufmaß Ja“ angekreuzt, aber noch keine Aufmaßnummer hinterlegt. Nach dem Export wandern die Einträge ins Archiv.</div>
+    <div id="mx-list" style="margin-top:12px;"></div>
+    <div class="btn-block-row" style="margin-top:16px;">
+      <button class="btn btn-secondary" id="mx-anyway">Trotzdem exportieren</button>
+      <button class="btn btn-primary" id="mx-cancel">Export abbrechen</button>
+    </div>`;
+  const list = modal.querySelector('#mx-list');
+  missing.forEach(e => {
+    const item = document.createElement('div');
+    item.className = 'entry-item';
+    item.innerHTML = `
+      <div class="info">
+        <div class="customer">${escapeHtml(e.customer)}</div>
+        <div class="desc">${escapeHtml(e.desc)}</div>
+        <div class="meta">${formatDateLong(e.date)} · ${entryTimeLabel(e)}</div>
+      </div>
+      <div class="actions"><button class="btn btn-secondary mx-fix" style="margin:0; min-height:40px; padding:8px 12px; font-size:14px; width:auto;">Nummer eintragen</button></div>`;
+    item.querySelector('.mx-fix').addEventListener('click', () => openEditModal(e.id));
+    list.appendChild(item);
+  });
+  modal.querySelector('#mx-cancel').addEventListener('click', () => {
+    closeEditModal();
+    showToast('Export abgebrochen – Aufmaßnummer beim Eintrag über den Stift nachtragen.', 4000);
+  });
+  modal.querySelector('#mx-anyway').addEventListener('click', () => {
+    closeEditModal();
+    exportPdf(true);
+  });
+  $('editModalBackdrop').classList.add('show');
+}
+
+async function exportPdf(skipAufmassCheck) {
   if (state.entries.length === 0) { showToast('Keine Einträge zum Exportieren vorhanden.'); return; }
+  if (!skipAufmassCheck && entriesMissingAufmassNr().length) { showMissingAufmassWarning(); return; }
   showToast('PDF wird erstellt …');
 
   const { PDFDocument, rgb } = PDFLib;
@@ -2219,6 +2261,7 @@ function openCustomerModal(key) {
 
 function aufmassBadge(e) {
   if (e.aufmass !== 'ja') return '';
+  if (!String(e.aufmassNr || '').trim() && !isVacation(e)) return '<span class="badge badge-warn">Aufmaß – Nr. fehlt</span>';
   return `<span class="badge">Aufmaß${e.aufmassNr ? ' ' + escapeHtml(e.aufmassNr) : ''}</span>`;
 }
 
