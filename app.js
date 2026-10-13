@@ -5,6 +5,7 @@
 const STORE_KEY = 'stundenzettel_v1';
 
 let state = loadState();
+let selectedSite = null; // v32: gewählte Baustelle im Formular { key, id }
 
 function loadState() {
   try {
@@ -929,6 +930,8 @@ function readFormAsEntry(preview = false) {
     timeMode,
     breakMinutes: breakMinutes || 0
   };
+  const site = currentSite();
+  if (site) { entry.siteId = site.id; entry.siteName = site.name; entry.siteAddress = site.address || ''; }
   if (timeMode === 'range') {
     entry.start = getTP($('f-start-label')) || quarterIndexToHHMM(parseInt($('f-start').value, 10) || 0);
     entry.end = getTP($('f-end-label')) || quarterIndexToHHMM(parseInt($('f-end').value, 10) || 0);
@@ -975,6 +978,9 @@ function resetEntryFormFields() {
   addrForKey = null;
   hideSuggest();
   $('newCustomerBox').style.display = 'none';
+  selectedSite = null;
+  hideSiteForm();
+  renderSiteRow();
   document.querySelector('label[for="f-customer-address"]').textContent = 'Adresse (Neukunde) — Straße/Ort, Telefon';
   $('f-desc').value = '';
 
@@ -1037,7 +1043,7 @@ function renderEntries() {
       item.className = 'entry-item' + (isVacation(e) ? ' vacation' : '');
       item.innerHTML = `
         <div class="info">
-          <div class="customer">${escapeHtml(e.customer)} ${aufmassBadge(e)}</div>
+          <div class="customer">${escapeHtml(e.customer)} ${siteBadge(e)}${aufmassBadge(e)}</div>
           <div class="desc">${escapeHtml(e.desc)}</div>
           <div class="meta">${timeLabel}${e.breakMinutes ? ` · ${e.breakMinutes} Min Pause` : ''} · ${formatHoursDE(minutesToHoursDecimal(mins))} Std</div>
         </div>
@@ -1075,6 +1081,8 @@ function openEditModal(id) {
     <input type="date" id="m-date" value="${e.date}">
     <label>Kunde</label>
     <input type="text" id="m-customer" value="${escapeHtml(e.customer)}">
+    <label for="m-site">Baustelle</label>
+    <select id="m-site"></select>
     <label>Adresse (Straße/Ort, Telefon)</label>
     <textarea id="m-address" rows="2">${escapeHtml(e.address || (state.customers[custKey(e.customer)] || {}).address || '')}</textarea>
     <button type="button" class="loc-btn" data-loc-target="m-address"><svg class="ic" aria-hidden="true"><use href="#i-pin"/></svg>Adresse aus Standort</button>
@@ -1117,7 +1125,18 @@ function openEditModal(id) {
   refreshAufmassPicker('m', e.customer);
   setAufmassNr('m', e.aufmassNr || '');
   $('m-nrBox').style.display = mAufmass === 'ja' ? 'block' : 'none';
-  modal.querySelector('#m-customer').addEventListener('input', () => refreshAufmassPicker('m', modal.querySelector('#m-customer').value));
+  const fillSiteSelect = () => {
+    const c = state.customers[custKey(modal.querySelector('#m-customer').value)];
+    const sites = (c && Array.isArray(c.sites) ? c.sites : []).filter(x => x && (!x.done || x.id === e.siteId));
+    const sel = modal.querySelector('#m-site');
+    const keep = sel.value || e.siteId || '';
+    let opts = '<option value="">– keine Baustelle –</option>' + sites.map(x => `<option value="${escapeHtml(x.id)}">${escapeHtml(x.name)}${x.done ? ' (erledigt)' : ''}</option>`).join('');
+    if (e.siteId && !sites.some(x => x.id === e.siteId)) opts += `<option value="${escapeHtml(e.siteId)}">${escapeHtml(e.siteName || 'Baustelle')}</option>`;
+    sel.innerHTML = opts;
+    sel.value = [...sel.options].some(o => o.value === keep) ? keep : '';
+  };
+  fillSiteSelect();
+  modal.querySelector('#m-customer').addEventListener('input', () => { refreshAufmassPicker('m', modal.querySelector('#m-customer').value); fillSiteSelect(); });
   modal.querySelector('#m-timeSeg').addEventListener('click', (ev) => {
     const btn = ev.target.closest('button[data-mode]'); if (!btn) return;
     mTimeMode = btn.dataset.mode;
@@ -1164,6 +1183,13 @@ function openEditModal(id) {
     e.aufmass = mAufmass;
     e.aufmassNr = mAufmass === 'ja' ? getAufmassNr('m') : '';
     e.address = modal.querySelector('#m-address').value.trim();
+    const sid = modal.querySelector('#m-site').value;
+    if (!sid) { delete e.siteId; delete e.siteName; delete e.siteAddress; }
+    else if (sid !== e.siteId) {
+      const c = state.customers[custKey(e.customer)];
+      const st = c && (c.sites || []).find(x => x.id === sid);
+      if (st) { e.siteId = st.id; e.siteName = st.name; e.siteAddress = st.address || ''; }
+    }
     upsertCustomer(e.customer, e.address);
     saveState();
     renderEntries();
@@ -1206,14 +1232,14 @@ function mergeEntriesByCustomerForExport(entries) {
   const order = [];
   const groupsByCustomer = {};
   entries.forEach(e => {
-    const key = (e.customer || '').trim().toLowerCase();
+    const key = (e.customer || '').trim().toLowerCase() + '|' + (e.siteId || e.siteName || '');
     if (!groupsByCustomer[key]) { groupsByCustomer[key] = []; order.push(key); }
     groupsByCustomer[key].push(e);
   });
   const merged = [];
   order.forEach(key => {
     const group = groupsByCustomer[key];
-    if (group.length === 1) { merged.push(group[0]); return; }
+    if (group.length === 1) { merged.push(withSitePrefix(group[0])); return; }
     const totalMinutes = group.reduce((sum, e) => sum + computeNetMinutes(e), 0);
     const descs = [...new Set(group.map(e => (e.desc || '').trim()).filter(Boolean))];
     const withAddress = group.find(e => e.address);
@@ -1222,7 +1248,7 @@ function mergeEntriesByCustomerForExport(entries) {
       date: group[0].date,
       customer: group[0].customer,
       address: withAddress ? withAddress.address : '',
-      desc: descs.join(' + '),
+      desc: sitePrefix(group[0]) + descs.join(' + '),
       aufmass: group.some(e => e.aufmass === 'ja') ? 'ja' : 'nein',
       aufmassNr: [...new Set(group.map(e => e.aufmassNr).filter(Boolean))].join(', '),
       timeMode: 'duration',
@@ -1563,7 +1589,7 @@ function renderArchiveMonthView() {
           item.className = 'entry-item';
           item.innerHTML = `
             <div class="info">
-              <div class="customer">${escapeHtml(e.customer)} ${aufmassBadge(e)}</div>
+              <div class="customer">${escapeHtml(e.customer)} ${siteBadge(e)}${aufmassBadge(e)}</div>
               <div class="desc">${escapeHtml(e.desc)}</div>
               <div class="meta">${timeLabel}${e.breakMinutes ? ` · ${e.breakMinutes} Min Pause` : ''} · ${formatHoursDE(minutesToHoursDecimal(mins))} Std</div>
             </div>
@@ -1641,7 +1667,7 @@ function renderArchive() {
       item.className = 'entry-item';
       item.innerHTML = `
         <div class="info">
-          <div class="customer">${entryDateLabel(e)} · ${escapeHtml(e.customer)} ${aufmassBadge(e)}</div>
+          <div class="customer">${entryDateLabel(e)} · ${escapeHtml(e.customer)} ${siteBadge(e)}${aufmassBadge(e)}</div>
           <div class="desc">${escapeHtml(e.desc)}</div>
           <div class="meta">${timeLabel}${e.breakMinutes ? ` · ${e.breakMinutes} Min Pause` : ''} · ${formatHoursDE(minutesToHoursDecimal(mins))} Std</div>
         </div>
@@ -1891,9 +1917,10 @@ function importDataBackup(file) {
       const r = cloud.remote[key];
       if (r && r.del && (r.t || 0) >= vt) return;
       const cur = state.customers[key];
-      if (!cur) { state.customers[key] = { name: val.name, address: val.address || '', t: vt }; addedCust++; cloudPushCustomer(key); }
-      else if (vt > (cur.t || 0) && (val.name !== cur.name || (val.address && val.address !== cur.address))) {
-        state.customers[key] = { name: val.name, address: val.address || cur.address || '', t: vt };
+      const sitesIn = Array.isArray(val.sites) ? { sites: val.sites } : {};
+      if (!cur) { state.customers[key] = { name: val.name, address: val.address || '', t: vt, ...sitesIn }; addedCust++; cloudPushCustomer(key); }
+      else if (vt > (cur.t || 0) && (val.name !== cur.name || (val.address && val.address !== cur.address) || (Array.isArray(val.sites) && !sameSites(val.sites, cur.sites)))) {
+        state.customers[key] = { name: val.name, address: val.address || cur.address || '', t: vt, ...(Array.isArray(val.sites) ? sitesIn : (cur.sites ? { sites: cur.sites } : {})) };
         cloudPushCustomer(key);
       }
     });
@@ -2042,11 +2069,10 @@ function renderSuggest() {
   if (!q) { hideSuggest(); return; }
   const matches = customerMatches(q);
   const exact = state.customers[custKey(q)];
-  if (exact && matches.length <= 1) { hideSuggest(); return; }
-  suggestItems = matches;
-  let html = matches.map((c, i) =>
-    `<div class="suggest-item" data-i="${i}"><div class="s-name">${escapeHtml(c.name)}</div>` +
-    (c.address ? `<div class="s-addr">${escapeHtml(c.address)}</div>` : '') + '</div>').join('');
+  if (exact && matches.length <= 1 && !activeSites(exact).length) { hideSuggest(); return; }
+  const items = withSiteSuggestions(q, matches);
+  suggestItems = items;
+  let html = items.map((it, i) => suggestItemHtml(it, i)).join('');
   if (!exact) html += `<div class="suggest-item s-new" data-new="1"><svg class="ic" aria-hidden="true"><use href="#i-plus"/></svg>„${escapeHtml(q)}“ als neuen Kunden übernehmen</div>`;
   box.innerHTML = html;
   box.classList.add('show');
@@ -2060,6 +2086,8 @@ function pickCustomer(c) {
   $('newCustomerBox').style.display = 'block';
   hideSuggest();
   updateAddressLabel();
+  if (!selectedSite || selectedSite.key !== custKey(c.name)) selectedSite = null;
+  renderSiteRow();
   if (aufmass === 'ja') refreshAufmassPicker('f', c.name);
 }
 
@@ -2075,6 +2103,8 @@ function onCustomerInput() {
   const key = custKey(name);
   const known = state.customers[key];
   const addrEl = $('f-customer-address');
+  if (selectedSite && selectedSite.key !== key) selectedSite = null;
+  renderSiteRow();
   if (known) {
     // Adresse des gewählten Kunden übernehmen – außer sie wurde gerade für genau diesen Kunden eingetippt
     if (addrForKey !== key) { addrEl.value = known.address || ''; addrForKey = key; }
@@ -2106,7 +2136,7 @@ function initCustomerField() {
       showToast(`„${name}“ zum Kundenstamm hinzugefügt – Adresse bitte unten eintragen.`);
       $('f-customer-address').focus();
     } else {
-      pickCustomer(suggestItems[parseInt(it.dataset.i, 10)]);
+      pickSuggestion(suggestItems[parseInt(it.dataset.i, 10)]);
     }
   });
   const addr = $('f-customer-address');
@@ -2182,9 +2212,10 @@ function renameCustomer(oldKey, newName, address) {
     const target = state.customers[newKey];
     if (target) {
       if (!target.address && (address || c.address)) target.address = address || c.address;
+      if (Array.isArray(c.sites) && c.sites.length) target.sites = [...(target.sites || []), ...c.sites.filter(x => !(target.sites || []).some(y => y.id === x.id))];
       target.t = Date.now();
     } else {
-      state.customers[newKey] = { name: newName, address: address || c.address || '', t: Date.now() };
+      state.customers[newKey] = { name: newName, address: address || c.address || '', t: Date.now(), ...(Array.isArray(c.sites) && c.sites.length ? { sites: c.sites } : {}) };
     }
     if (state.customerDeleted) delete state.customerDeleted[newKey];
     delete state.customers[oldKey];
@@ -2223,6 +2254,9 @@ function openCustomerModal(key) {
     <label>Adresse (Straße/Ort, Telefon)</label>
     <textarea id="mc-address" rows="3">${escapeHtml(c.address || '')}</textarea>
     <button type="button" class="loc-btn" data-loc-target="mc-address"><svg class="ic" aria-hidden="true"><use href="#i-pin"/></svg>Adresse aus Standort</button>
+    <label>Baustellen</label>
+    <div id="mc-sites"></div>
+    <button type="button" class="qbtn site-add" id="mc-site-add"><svg class="ic" aria-hidden="true"><use href="#i-plus"/></svg>Baustelle</button>
     <div class="hint">Änderungen gelten${cloud.user ? ' für alle Kollegen' : ''}. Bei einem neuen Namen werden auch noch nicht exportierte Einträge dieses Kunden umbenannt; bereits exportierte bleiben unverändert.</div>
     <div class="btn-block-row" style="margin-top:16px;">
       <button class="btn btn-secondary" id="mc-cancel">Abbrechen</button>
@@ -2230,11 +2264,49 @@ function openCustomerModal(key) {
     </div>
     <button class="btn btn-danger" id="mc-del">Kunde löschen</button>`;
   modal.querySelector('#mc-cancel').addEventListener('click', closeEditModal);
+  const siteWork = (Array.isArray(c.sites) ? c.sites : []).map(x => ({ ...x }));
+  const renderSiteEditor = () => {
+    const host = modal.querySelector('#mc-sites');
+    host.innerHTML = siteWork.length ? '' : '<div class="hint" style="margin-top:0;">Noch keine Baustellen.</div>';
+    siteWork.forEach((st, i) => {
+      const d = document.createElement('div');
+      d.className = 'site-edit' + (st.done ? ' done' : '');
+      d.innerHTML = `
+        <input type="text" class="mcs-name" placeholder="Bezeichnung, z. B. Neubau" value="${escapeHtml(st.name || '')}">
+        <textarea class="mcs-addr" id="mcs-addr-${i}" rows="2" placeholder="Adresse der Baustelle">${escapeHtml(st.address || '')}</textarea>
+        <button type="button" class="loc-btn" data-loc-target="mcs-addr-${i}"><svg class="ic" aria-hidden="true"><use href="#i-pin"/></svg>Adresse aus Standort</button>
+        <div class="site-edit-row">
+          <label class="chk"><input type="checkbox" class="mcs-done" ${st.done ? 'checked' : ''}> erledigt</label>
+          <button type="button" class="link-btn mcs-del" style="color:var(--red); padding:0;">Löschen</button>
+        </div>`;
+      d.querySelector('.mcs-name').addEventListener('input', ev => { st.name = ev.target.value; });
+      d.querySelector('.mcs-addr').addEventListener('input', ev => { st.address = ev.target.value; });
+      d.querySelector('.mcs-done').addEventListener('change', ev => { st.done = ev.target.checked; d.classList.toggle('done', st.done); });
+      d.querySelector('.mcs-del').addEventListener('click', () => {
+        if (!confirm(`Baustelle „${st.name || 'ohne Namen'}“ löschen? Bereits erfasste Einträge behalten ihre Angabe.`)) return;
+        siteWork.splice(i, 1); renderSiteEditor();
+      });
+      host.appendChild(d);
+    });
+  };
+  renderSiteEditor();
+  modal.querySelector('#mc-site-add').addEventListener('click', () => {
+    siteWork.push({ id: uid(), name: '', address: '', done: false, t: Date.now() });
+    renderSiteEditor();
+    const names = modal.querySelectorAll('.mcs-name'); if (names.length) names[names.length - 1].focus();
+  });
   modal.querySelector('#mc-save').addEventListener('click', () => {
     const newName = modal.querySelector('#mc-name').value.trim();
     const a = modal.querySelector('#mc-address').value.trim();
     if (!newName) { showToast('Bitte einen Namen eintragen.'); return; }
     if (!a && c.address) { showToast('Adresse darf nicht leer sein (oder Abbrechen).'); return; }
+    const cleaned = siteWork.map(x => ({ ...x, name: (x.name || '').trim(), address: (x.address || '').trim() })).filter(x => x.name);
+    if (JSON.stringify(cleaned) !== JSON.stringify(c.sites || [])) {
+      c.sites = cleaned.map(x => ({ ...x, t: Date.now() }));
+      c.t = Date.now();
+      saveState();
+      cloudPushCustomer(key);
+    }
     if (newName === c.name) {
       if (a) upsertCustomer(c.name, a);
       closeEditModal();
@@ -2473,7 +2545,7 @@ function cloudPushCustomer(key, deleted) {
   if (!c) return;
   if (!c.t) { c.t = Date.now(); saveState(); }
   cloud.remote[key] = { address: c.address || '', del: false, t: c.t, name: c.name };
-  customerDocRef(key).set({ key, name: c.name, address: c.address || '', t: c.t, by, del: false }, { merge: true }).catch(cloudError);
+  customerDocRef(key).set({ key, name: c.name, address: c.address || '', sites: Array.isArray(c.sites) ? c.sites : [], t: c.t, by, del: false }, { merge: true }).catch(cloudError);
 }
 
 function startCustomerSync() {
@@ -2503,10 +2575,11 @@ function startCustomerSync() {
       if ((state.customerDeleted[key] || 0) > xt) { cloudPushCustomer(key, true); return; }
       const cur = state.customers[key];
       // Lokal neuer geändert (z. B. umbenannt, als man nicht angemeldet war) -> lokalen Stand hochladen
-      if (cur && (cur.t || 0) > xt && (cur.name !== x.name || (cur.address || '') !== (x.address || ''))) { cloudPushCustomer(key); return; }
+      if (cur && (cur.t || 0) > xt && (cur.name !== x.name || (cur.address || '') !== (x.address || '') || (Array.isArray(x.sites) && !sameSites(cur.sites, x.sites)) || (!Array.isArray(x.sites) && (cur.sites || []).length))) { cloudPushCustomer(key); return; }
       // Eine lokal vorhandene Adresse nicht durch eine leere aus der Cloud löschen (sie wird hochgeladen)
       const rec = { name: x.name, address: x.address || (cur && cur.address) || '', t: x.t || 0 };
-      if (!cur || cur.name !== rec.name || cur.address !== rec.address) { state.customers[key] = rec; changed = true; }
+      if (Array.isArray(x.sites)) rec.sites = x.sites; else if (cur && Array.isArray(cur.sites)) rec.sites = cur.sites;
+      if (!cur || cur.name !== rec.name || cur.address !== rec.address || !sameSites(cur.sites, rec.sites)) { state.customers[key] = rec; changed = true; }
     });
     if (changed) { saveState(); refreshCustomerList(); updateAddressLabelSafe(); }
     if (!snap.metadata.fromCache && !cloud.syncedOnce) {
@@ -2535,7 +2608,7 @@ function pushLocalCustomers() {
   const ops = [];
   Object.entries(state.customers).forEach(([key, c]) => {
     const r = cloud.remote[key];
-    if (!r) ops.push({ key, data: { key, name: c.name, address: c.address || '', t: c.t || Date.now(), by, del: false } });
+    if (!r) ops.push({ key, data: { key, name: c.name, address: c.address || '', sites: Array.isArray(c.sites) ? c.sites : [], t: c.t || Date.now(), by, del: false } });
     else if (!r.del && !r.address && c.address) ops.push({ key, data: { address: c.address, t: Date.now(), by } });
   });
   if (!ops.length) return;
@@ -2820,12 +2893,14 @@ async function geocodeAddress(addr, near) {
 // Adressen, die noch nicht (oder vor > 14 Tagen erfolglos) gesucht wurden
 function uncachedAddresses() {
   const seen = new Set(), out = [];
-  Object.values(state.customers).forEach(c => {
-    const k = geoKey(c.address);
+  const addrs = [];
+  Object.values(state.customers).forEach(c => { addrs.push(c.address); activeSites(c).forEach(st => addrs.push(st.address)); });
+  addrs.forEach(a => {
+    const k = geoKey(a);
     if (!k || k.length < 5 || seen.has(k)) return;
     seen.add(k);
     const hit = geoCache[k];
-    if (!hit || (hit.miss && Date.now() - hit.ts > 14 * 864e5)) out.push(c.address);
+    if (!hit || (hit.miss && Date.now() - hit.ts > 14 * 864e5)) out.push(a);
   });
   return out;
 }
@@ -2849,11 +2924,16 @@ async function fillGeoCache(near, onProgress) {
 }
 
 function nearbyCustomers(lat, lng, radius) {
-  return Object.values(state.customers).map(c => {
+  const out = [];
+  Object.values(state.customers).forEach(c => {
     const g = geoCache[geoKey(c.address)];
-    if (!g || g.miss) return null;
-    return { c, d: distanceM(lat, lng, g.lat, g.lng) };
-  }).filter(x => x && x.d <= radius).sort((a, b) => a.d - b.d).slice(0, 6);
+    if (g && !g.miss) out.push({ c, d: distanceM(lat, lng, g.lat, g.lng) });
+    activeSites(c).forEach(st => {
+      const gs = geoCache[geoKey(st.address)];
+      if (gs && !gs.miss) out.push({ c, s: st, d: distanceM(lat, lng, gs.lat, gs.lng) });
+    });
+  });
+  return out.filter(x => x.d <= radius).sort((a, b) => a.d - b.d).slice(0, 6);
 }
 
 function renderNearbyList(pos, note) {
@@ -2861,12 +2941,12 @@ function renderNearbyList(pos, note) {
   const radius = Math.min(1500, Math.max(400, acc * 2));
   const near = nearbyCustomers(lat, lng, radius);
   const box = $('customerSuggest');
-  suggestItems = near.map(x => x.c);
+  suggestItems = near.map(x => (x.s ? { __site: true, c: x.c, s: x.s } : x.c));
   const withAddr = Object.values(state.customers).filter(c => geoKey(c.address).length >= 5).length;
   let html = `<div class="suggest-head">${near.length ? 'Kunden in der Nähe' : 'Kein Kunde mit Adresse in der Nähe'} (±${acc} m)</div>`;
   html += near.map((x, i) =>
-    `<div class="suggest-item" data-i="${i}"><div class="s-name">${escapeHtml(x.c.name)} <span class="s-dist">${formatDist(x.d)}</span></div>` +
-    (x.c.address ? `<div class="s-addr">${escapeHtml(x.c.address)}</div>` : '') + '</div>').join('');
+    `<div class="suggest-item" data-i="${i}"><div class="s-name">${escapeHtml(x.c.name)}${x.s ? ` <span class="s-site">${escapeHtml(x.s.name)}</span>` : ''} <span class="s-dist">${formatDist(x.d)}</span></div>` +
+    ((x.s ? x.s.address : x.c.address) ? `<div class="s-addr">${escapeHtml(x.s ? x.s.address : x.c.address)}</div>` : '') + '</div>').join('');
   if (note) html += `<div class="suggest-note">${note}</div>`;
   else if (!near.length) html += `<div class="suggest-note">Abgeglichen werden nur Kunden mit Adresse im Kundenstamm (${withAddr}).</div>`;
   box.innerHTML = html;
@@ -2906,3 +2986,132 @@ document.addEventListener('click', (ev) => {
 // Im Hintergrund neue/geänderte Kundenadressen vorab abgleichen (langsam, ohne Standortabfrage)
 setTimeout(() => fillGeoCache(null), 8000);
 window.addEventListener('online', () => setTimeout(() => fillGeoCache(null), 3000));
+
+// ---- v32: Baustellen je Kunde ----
+// Gespeichert beim Kunden im gemeinsamen Kundenstamm: c.sites = [{ id, name, address, done, t }]
+// (Firestore-Feld „sites“ im Kunden-Dokument – keine neue Sammlung, keine neue Regel nötig).
+// Ein Eintrag merkt sich die gewählte Baustelle als Kopie (siteId, siteName, siteAddress).
+// Im PDF bleibt das Kundenfeld wie bisher; „BV <Baustelle>, <Adresse>:“ steht vor der Beschreibung.
+
+function activeSites(c) { return (c && Array.isArray(c.sites) ? c.sites : []).filter(x => x && x.name && !x.done); }
+function sameSites(a, b) { return JSON.stringify(a || []) === JSON.stringify(b || []); }
+function currentSite() {
+  if (!selectedSite) return null;
+  const c = state.customers[selectedSite.key];
+  return c && Array.isArray(c.sites) ? c.sites.find(x => x.id === selectedSite.id) || null : null;
+}
+function siteTitle(name) { return /^(bv|baustelle)\b/i.test(name || '') ? name : 'BV ' + name; }
+function sitePrefix(e) {
+  if (!e.siteName) return '';
+  return siteTitle(e.siteName) + (e.siteAddress ? ', ' + e.siteAddress.replace(/,?\s*(Tel\.?|Telefon|Mobil|Handy)\b.*$/i, '') : '') + ': ';
+}
+function withSitePrefix(e) { return e.siteName ? { ...e, desc: sitePrefix(e) + (e.desc || '') } : e; }
+function siteBadge(e) { return e.siteName ? `<span class="badge badge-site">${escapeHtml(siteTitle(e.siteName))}</span>` : ''; }
+
+// Vorschlagsliste: zu passenden Kunden auch deren Baustellen; Baustellen auch über Name/Ort finden
+function withSiteSuggestions(q, matches) {
+  const ql = q.trim().toLowerCase();
+  const items = [];
+  const added = new Set();
+  matches.forEach(c => {
+    items.push(c); added.add(custKey(c.name));
+    activeSites(c).forEach(st => items.push({ __site: true, c, s: st }));
+  });
+  if (ql) Object.values(state.customers).forEach(c => {
+    if (added.has(custKey(c.name))) return;
+    activeSites(c).forEach(st => {
+      if ((st.name || '').toLowerCase().includes(ql) || (st.address || '').toLowerCase().includes(ql)) items.push({ __site: true, c, s: st });
+    });
+  });
+  return items.slice(0, 12);
+}
+function suggestItemHtml(it, i) {
+  if (it && it.__site) {
+    return `<div class="suggest-item s-siteitem" data-i="${i}"><div class="s-name">${escapeHtml(it.c.name)} <span class="s-site">${escapeHtml(it.s.name)}</span></div>` +
+      (it.s.address ? `<div class="s-addr">${escapeHtml(it.s.address)}</div>` : '') + '</div>';
+  }
+  return `<div class="suggest-item" data-i="${i}"><div class="s-name">${escapeHtml(it.name)}</div>` +
+    (it.address ? `<div class="s-addr">${escapeHtml(it.address)}</div>` : '') + '</div>';
+}
+function pickSuggestion(it) {
+  if (!it) return;
+  if (it.__site) {
+    selectedSite = { key: custKey(it.c.name), id: it.s.id };
+    pickCustomer(it.c);
+  } else {
+    pickCustomer(it);
+  }
+}
+
+// Baustellen-Zeile unter dem Kundenfeld: Chips der aktiven Baustellen + „Baustelle“
+function renderSiteRow() {
+  const row = $('siteRow');
+  if (!row) return;
+  const name = $('f-customer').value.trim();
+  if (!name) { row.style.display = 'none'; row.innerHTML = ''; return; }
+  const key = custKey(name);
+  const c = state.customers[key];
+  const sites = activeSites(c);
+  const cur = currentSite();
+  if (cur && !sites.some(x => x.id === cur.id)) sites.unshift(cur);
+  let html = sites.map(st => `<button type="button" class="qbtn site-chip${cur && cur.id === st.id ? ' active' : ''}" data-site="${escapeHtml(st.id)}">${escapeHtml(st.name)}</button>`).join('');
+  html += `<button type="button" class="qbtn site-add" id="siteAddBtn"><svg class="ic" aria-hidden="true"><use href="#i-plus"/></svg>Baustelle</button>`;
+  if (cur) html += `<div class="site-info"><svg class="ic" aria-hidden="true"><use href="#i-pin"/></svg><span>${escapeHtml(siteTitle(cur.name))}${cur.address ? ' · ' + escapeHtml(cur.address) : ''}</span></div>`;
+  row.innerHTML = html;
+  row.style.display = 'flex';
+}
+
+function showSiteForm() {
+  const name = $('f-customer').value.trim();
+  if (!name) { showToast('Bitte zuerst den Kunden eintragen.'); $('f-customer').focus(); return; }
+  $('s-name').value = ''; $('s-address').value = '';
+  $('siteFormTitle').textContent = `Neue Baustelle für „${name}“`;
+  $('siteForm').style.display = 'block';
+  $('s-name').focus();
+}
+function hideSiteForm() { const f = $('siteForm'); if (f) f.style.display = 'none'; }
+
+function saveNewSite() {
+  const custName = $('f-customer').value.trim();
+  const siteName = $('s-name').value.trim();
+  const siteAddr = $('s-address').value.trim();
+  if (!custName) { showToast('Bitte zuerst den Kunden eintragen.'); return; }
+  if (!siteName) { showToast('Bitte eine Bezeichnung eintragen, z. B. „Neubau“.'); $('s-name').focus(); return; }
+  const key = custKey(custName);
+  if (!state.customers[key]) upsertCustomer(custName, $('f-customer-address').value);
+  const c = state.customers[key];
+  if (!c) return;
+  if (activeSites(c).some(x => x.name.toLowerCase() === siteName.toLowerCase())) {
+    const ex = activeSites(c).find(x => x.name.toLowerCase() === siteName.toLowerCase());
+    selectedSite = { key, id: ex.id };
+    hideSiteForm(); renderSiteRow();
+    showToast('Diese Baustelle gibt es schon – ausgewählt.');
+    return;
+  }
+  const st = { id: uid(), name: siteName, address: siteAddr, done: false, t: Date.now() };
+  c.sites = [...(Array.isArray(c.sites) ? c.sites : []), st];
+  c.t = Date.now();
+  saveState();
+  cloudPushCustomer(key);
+  refreshCustomerList();
+  selectedSite = { key, id: st.id };
+  hideSiteForm();
+  renderSiteRow();
+  showToast(`Baustelle „${siteName}“ angelegt${cloud.user ? ' – für alle Kollegen sichtbar' : ''}.`);
+}
+
+(function initSites() {
+  const row = $('siteRow');
+  if (!row) return;
+  row.addEventListener('click', (ev) => {
+    const add = ev.target.closest('#siteAddBtn');
+    if (add) { showSiteForm(); return; }
+    const chip = ev.target.closest('.site-chip');
+    if (!chip) return;
+    const key = custKey($('f-customer').value);
+    selectedSite = (selectedSite && selectedSite.id === chip.dataset.site) ? null : { key, id: chip.dataset.site };
+    renderSiteRow();
+  });
+  $('s-cancel').addEventListener('click', hideSiteForm);
+  $('s-save').addEventListener('click', saveNewSite);
+})();

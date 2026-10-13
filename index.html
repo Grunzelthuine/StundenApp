@@ -249,6 +249,24 @@
   .suggest-head{padding:10px 14px 6px; font-size:12px; font-weight:700; color:var(--blue);}
   .suggest-note{padding:2px 14px 12px; font-size:13px; color:var(--muted); line-height:1.45;}
   .s-dist{display:inline-block; font-size:12px; font-weight:700; color:var(--blue); background:var(--blue-tint); border-radius:20px; padding:1px 8px; margin-left:4px; vertical-align:1px;}
+  .site-row{margin-top:8px; align-items:center;}
+  #newCustomerBox > label:first-child{margin-top:14px;}
+  .qbtn.site-add{display:inline-flex; align-items:center; gap:4px; background:var(--orange-tint); color:var(--orange-ink);}
+  .qbtn.site-add svg.ic{width:16px; height:16px;}
+  .site-info{flex-basis:100%; display:flex; align-items:flex-start; gap:6px; font-size:13px; color:var(--muted); margin-top:2px; line-height:1.4;}
+  .site-info svg.ic{width:15px; height:15px; color:var(--orange); margin-top:1px;}
+  .site-form{margin-top:10px; padding:12px 14px 14px; border-radius:14px; background:var(--orange-tint);}
+  .site-form-title{font-size:14px; font-weight:700; color:var(--orange-ink);}
+  .site-form input, .site-form textarea{background-color:#fff;}
+  .site-form .btn{margin-top:0;}
+  .s-site{display:inline-block; font-size:12px; font-weight:700; color:var(--orange-ink); background:var(--orange-tint); border-radius:20px; padding:1px 8px; margin-left:4px; vertical-align:1px;}
+  .badge.badge-site, .customer .badge.badge-site{background:var(--orange-tint); color:var(--orange-ink);}
+  .site-edit{background:var(--field); border-radius:12px; padding:10px; margin-bottom:8px;}
+  .site-edit input, .site-edit textarea{background-color:#fff; margin-bottom:6px;}
+  .site-edit.done{opacity:.6;}
+  .site-edit-row{display:flex; justify-content:space-between; align-items:center; margin-top:6px;}
+  .chk{display:inline-flex; align-items:center; gap:6px; margin:0; font-size:14px; color:var(--text); font-weight:600;}
+  .chk input{width:20px; height:20px; min-height:0; accent-color:var(--orange);}
   .loc-btn{display:inline-flex; align-items:center; gap:6px; margin-top:8px; border:none; background:var(--blue-tint); color:var(--blue);
     border-radius:22px; padding:8px 14px; font-size:14px; font-weight:600; font-family:inherit; cursor:pointer;}
   .loc-btn svg.ic{width:17px; height:17px;}
@@ -329,6 +347,19 @@
         <button type="button" class="near-btn" id="nearCustBtn" title="Kunde in der Nähe" aria-label="Kunde in der Nähe suchen"><svg class="ic" aria-hidden="true"><use href="#i-pin"/></svg></button>
       </div>
       <div class="suggest" id="customerSuggest"></div>
+    </div>
+    <div class="quickbtns site-row" id="siteRow" style="display:none;"></div>
+    <div class="site-form" id="siteForm" style="display:none;">
+      <div class="site-form-title" id="siteFormTitle">Neue Baustelle</div>
+      <label for="s-name">Bezeichnung</label>
+      <input type="text" id="s-name" placeholder="z. B. Neubau oder Baustelle Spelle" autocomplete="off">
+      <label for="s-address">Adresse der Baustelle</label>
+      <textarea id="s-address" rows="2" placeholder="z. B. Am Sportplatz 4, 48480 Spelle"></textarea>
+      <button type="button" class="loc-btn" data-loc-target="s-address"><svg class="ic" aria-hidden="true"><use href="#i-pin"/></svg>Adresse aus Standort</button>
+      <div class="btn-block-row" style="margin-top:12px;">
+        <button type="button" class="btn btn-secondary" id="s-cancel">Abbrechen</button>
+        <button type="button" class="btn btn-primary" id="s-save">Baustelle speichern</button>
+      </div>
     </div>
     <div id="newCustomerBox" style="display:none;">
       <label for="f-customer-address">Adresse (Neukunde) — Straße/Ort, Telefon</label>
@@ -438,7 +469,7 @@
   </div>
 
   <button type="button" class="btn btn-secondary settings-open" id="openSettingsBtn"><span class="ht ht-gray"><svg class="ic" aria-hidden="true"><use href="#i-settings"/></svg></span>Einstellungen &amp; Sicherung</button>
-  <div class="footer-note">Version 31</div>
+  <div class="footer-note">Version 32</div>
 </main>
 
 <main id="settingsView" style="display:none;">
@@ -482,7 +513,7 @@
     </details>
   </div>
 
-  <div class="footer-note">Einträge bleiben lokal auf diesem Gerät gespeichert. Kundenstamm und Aufmaßnummern werden nach der Anmeldung abgeglichen.<br>Version 31</div>
+  <div class="footer-note">Einträge bleiben lokal auf diesem Gerät gespeichert. Kundenstamm und Aufmaßnummern werden nach der Anmeldung abgeglichen.<br>Version 32</div>
 </main>
 
 <div class="toast" id="toast"></div>
