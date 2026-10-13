@@ -3115,3 +3115,39 @@ function saveNewSite() {
   $('s-cancel').addEventListener('click', hideSiteForm);
   $('s-save').addEventListener('click', saveNewSite);
 })();
+
+// ---- v33: Fenster (Bottom-Sheet) auf dem iPhone sofort scrollbar ----
+// iOS gibt die erste Wischbewegung nach dem Öffnen sonst an die Seite dahinter weiter, und das
+// Fenster lässt sich erst nach einem Antippen scrollen. Abhilfe: Seite dahinter festhalten,
+// Fenster nach oben setzen und ihm den Fokus geben. Greift automatisch für alle Fenster.
+(function () {
+  const backdrop = document.getElementById('editModalBackdrop');
+  const modal = document.getElementById('editModal');
+  if (!backdrop || !modal) return;
+  modal.setAttribute('tabindex', '-1');
+  let savedY = 0, locked = false;
+  const lock = () => {
+    if (locked) return;
+    locked = true;
+    savedY = window.scrollY || window.pageYOffset || 0;
+    const b = document.body.style;
+    b.position = 'fixed'; b.top = `-${savedY}px`; b.left = '0'; b.right = '0'; b.width = '100%';
+    document.documentElement.classList.add('modal-open');
+    modal.scrollTop = 0;
+    // Erzwingt Neuberechnung, damit iOS das Fenster als scrollbaren Bereich erkennt
+    void modal.offsetHeight;
+    requestAnimationFrame(() => { modal.scrollTop = 0; try { modal.focus({ preventScroll: true }); } catch (e) { modal.focus(); } });
+  };
+  const unlock = () => {
+    if (!locked) return;
+    locked = false;
+    const b = document.body.style;
+    b.position = ''; b.top = ''; b.left = ''; b.right = ''; b.width = '';
+    document.documentElement.classList.remove('modal-open');
+    window.scrollTo(0, savedY);
+  };
+  new MutationObserver(() => (backdrop.classList.contains('show') ? lock() : unlock()))
+    .observe(backdrop, { attributes: true, attributeFilter: ['class'] });
+  // Wird der Inhalt eines offenen Fensters ersetzt (z. B. Warnung → Bearbeiten), wieder nach oben
+  new MutationObserver(() => { if (locked) { modal.scrollTop = 0; } }).observe(modal, { childList: true });
+})();
