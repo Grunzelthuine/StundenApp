@@ -270,6 +270,10 @@
   .site-edit-row{display:flex; justify-content:space-between; align-items:center; margin-top:6px;}
   .chk{display:inline-flex; align-items:center; gap:6px; margin:0; font-size:14px; color:var(--text); font-weight:600;}
   .chk input{width:20px; height:20px; min-height:0; accent-color:var(--orange);}
+  .admin-clear-btn{display:inline-flex; align-items:center; gap:6px; margin:8px 0 0 8px; border:none; background:var(--red-tint); color:var(--red);
+    border-radius:22px; padding:8px 14px; font-size:14px; font-weight:600; font-family:inherit; cursor:pointer;}
+  .admin-clear-btn svg.ic{width:16px; height:16px;}
+  #adminBtns:empty{display:none;}
   .loc-btn{display:inline-flex; align-items:center; gap:6px; margin-top:8px; border:none; background:var(--blue-tint); color:var(--blue);
     border-radius:22px; padding:8px 14px; font-size:14px; font-weight:600; font-family:inherit; cursor:pointer;}
   .loc-btn svg.ic{width:17px; height:17px;}
@@ -301,6 +305,8 @@
   <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12l5 5l10-10"/></symbol>
   <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 9v4"/><path d="M10.363 3.591l-8.106 13.534a1.914 1.914 0 0 0 1.636 2.871h16.214a1.914 1.914 0 0 0 1.636-2.87l-8.106-13.536a1.914 1.914 0 0 0-3.274 0z"/><path d="M12 16h.01"/></symbol>
   <symbol id="i-pin" viewBox="0 0 24 24"><circle cx="12" cy="11" r="3"/><path d="M17.657 16.657l-4.243 4.243a2 2 0 0 1-2.827 0l-4.244-4.243a8 8 0 1 1 11.314 0z"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3a12 12 0 0 0 8.5 3a12 12 0 0 1-8.5 15a12 12 0 0 1-8.5-15a12 12 0 0 0 8.5-3"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><circle cx="12" cy="16" r="1"/><path d="M8 11v-4a4 4 0 1 1 8 0v4"/></symbol>
   <symbol id="i-pencil-plus" viewBox="0 0 24 24"><path d="M4 20h4l10.5-10.5a2.828 2.828 0 1 0-4-4l-10.5 10.5v4"/><path d="M13.5 6.5l4 4"/><path d="M16 19h6"/><path d="M19 16v6"/></symbol>
 </svg>
 
@@ -472,7 +478,7 @@
   </div>
 
   <button type="button" class="btn btn-secondary settings-open" id="openSettingsBtn"><span class="ht ht-gray"><svg class="ic" aria-hidden="true"><use href="#i-settings"/></svg></span>Einstellungen &amp; Sicherung</button>
-  <div class="footer-note">Version 33</div>
+  <div class="footer-note">Version 34</div>
 </main>
 
 <main id="settingsView" style="display:none;">
@@ -497,6 +503,12 @@
     </div>
   </div>
 
+  <div class="card" id="adminCard">
+    <h2><span class="ht ht-ink"><svg class="ic" aria-hidden="true"><use href="#i-shield"/></svg></span>Administrator</h2>
+    <div class="hint" id="adminStatus" style="margin-top:0;"></div>
+    <div class="btn-block-row" id="adminBtns" style="margin-top:12px;"></div>
+  </div>
+
   <div class="card">
     <h2><span class="ht ht-gray"><svg class="ic" aria-hidden="true"><use href="#i-database"/></svg></span>Datensicherung</h2>
     <div class="hint" style="margin-top:0;">Falls die App auf dem Handy mal neu eingerichtet werden muss (z. B. bei einem Update-Problem): Hier alle Daten (aktive Einträge, Archiv, Kundenliste) als Datei sichern und in der neuen Version wieder einspielen. Beim Einspielen wird nichts überschrieben oder gelöscht: Fehlende Einträge werden ergänzt, auch in bereits vorhandenen Exporten, und anschließend wird geprüft, ob alle Einträge der Sicherung in der App sind. Wichtig am iPhone: Beim Löschen des App-Symbols vom Home-Bildschirm werden auch die Daten der App gelöscht – vorher immer sichern.</div>
@@ -516,7 +528,7 @@
     </details>
   </div>
 
-  <div class="footer-note">Einträge bleiben lokal auf diesem Gerät gespeichert. Kundenstamm und Aufmaßnummern werden nach der Anmeldung abgeglichen.<br>Version 33</div>
+  <div class="footer-note">Einträge bleiben lokal auf diesem Gerät gespeichert. Kundenstamm und Aufmaßnummern werden nach der Anmeldung abgeglichen.<br>Version 34</div>
 </main>
 
 <div class="toast" id="toast"></div>

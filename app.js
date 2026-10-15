@@ -5,6 +5,8 @@
 const STORE_KEY = 'stundenzettel_v1';
 
 let state = loadState();
+let adminUntil = 0;   // v34: Administrator-Modus aktiv bis (ms)
+let adminCfg = undefined; // v34: { salt, hash, iter } | null = nicht festgelegt | undefined = unbekannt | 'denied'
 let selectedSite = null; // v32: gewählte Baustelle im Formular { key, id }
 
 function loadState() {
@@ -2009,6 +2011,7 @@ function upsertCustomer(name, address) {
     changed = true;
   } else if (address && address !== cur.address) {
     cur.address = address;
+    delete cur.addrCleared;
     cur.t = Date.now();
     changed = true;
   }
@@ -2254,6 +2257,7 @@ function openCustomerModal(key) {
     <label>Adresse (Straße/Ort, Telefon)</label>
     <textarea id="mc-address" rows="3">${escapeHtml(c.address || '')}</textarea>
     <button type="button" class="loc-btn" data-loc-target="mc-address"><svg class="ic" aria-hidden="true"><use href="#i-pin"/></svg>Adresse aus Standort</button>
+    ${c.address ? `<button type="button" class="admin-clear-btn" id="mc-addr-clear"><svg class="ic" aria-hidden="true"><use href="#i-lock"/></svg>Adresse leeren (Administrator)</button>` : ''}
     <label>Baustellen</label>
     <div id="mc-sites"></div>
     <button type="button" class="qbtn site-add" id="mc-site-add"><svg class="ic" aria-hidden="true"><use href="#i-plus"/></svg>Baustelle</button>
@@ -2264,6 +2268,12 @@ function openCustomerModal(key) {
     </div>
     <button class="btn btn-danger" id="mc-del">Kunde löschen</button>`;
   modal.querySelector('#mc-cancel').addEventListener('click', closeEditModal);
+  const clr = modal.querySelector('#mc-addr-clear');
+  if (clr) clr.addEventListener('click', async () => {
+    if (!(await requireAdmin())) return;
+    modal.querySelector('#mc-address').value = '';
+    clr.outerHTML = '<div class="hint" style="color:var(--orange-ink)">Adresse wird beim Speichern für alle geleert.</div>';
+  });
   const siteWork = (Array.isArray(c.sites) ? c.sites : []).map(x => ({ ...x }));
   const renderSiteEditor = () => {
     const host = modal.querySelector('#mc-sites');
@@ -2299,7 +2309,15 @@ function openCustomerModal(key) {
     const newName = modal.querySelector('#mc-name').value.trim();
     const a = modal.querySelector('#mc-address').value.trim();
     if (!newName) { showToast('Bitte einen Namen eintragen.'); return; }
-    if (!a && c.address) { showToast('Adresse darf nicht leer sein (oder Abbrechen).'); return; }
+    if (!a && c.address) {
+      if (!isAdmin()) { showToast('Adresse darf nicht leer sein. Leeren kann nur der Administrator.', 4000); return; }
+      c.address = '';
+      c.addrCleared = Date.now();
+      c.t = Date.now();
+      saveState();
+      cloudPushCustomer(key);
+      refreshCustomerList();
+    }
     const cleaned = siteWork.map(x => ({ ...x, name: (x.name || '').trim(), address: (x.address || '').trim() })).filter(x => x.name);
     if (JSON.stringify(cleaned) !== JSON.stringify(c.sites || [])) {
       c.sites = cleaned.map(x => ({ ...x, t: Date.now() }));
@@ -2544,8 +2562,9 @@ function cloudPushCustomer(key, deleted) {
   const c = state.customers[key];
   if (!c) return;
   if (!c.t) { c.t = Date.now(); saveState(); }
-  cloud.remote[key] = { address: c.address || '', del: false, t: c.t, name: c.name };
-  customerDocRef(key).set({ key, name: c.name, address: c.address || '', sites: Array.isArray(c.sites) ? c.sites : [], t: c.t, by, del: false }, { merge: true }).catch(cloudError);
+  const addrCleared = c.address ? 0 : (c.addrCleared || 0);
+  cloud.remote[key] = { address: c.address || '', del: false, t: c.t, name: c.name, addrCleared };
+  customerDocRef(key).set({ key, name: c.name, address: c.address || '', addrCleared, sites: Array.isArray(c.sites) ? c.sites : [], t: c.t, by, del: false }, { merge: true }).catch(cloudError);
 }
 
 function startCustomerSync() {
@@ -2575,9 +2594,12 @@ function startCustomerSync() {
       if ((state.customerDeleted[key] || 0) > xt) { cloudPushCustomer(key, true); return; }
       const cur = state.customers[key];
       // Lokal neuer geändert (z. B. umbenannt, als man nicht angemeldet war) -> lokalen Stand hochladen
+      if (x.addrCleared) cloud.remote[key].addrCleared = x.addrCleared;
       if (cur && (cur.t || 0) > xt && (cur.name !== x.name || (cur.address || '') !== (x.address || '') || (Array.isArray(x.sites) && !sameSites(cur.sites, x.sites)) || (!Array.isArray(x.sites) && (cur.sites || []).length))) { cloudPushCustomer(key); return; }
       // Eine lokal vorhandene Adresse nicht durch eine leere aus der Cloud löschen (sie wird hochgeladen)
-      const rec = { name: x.name, address: x.address || (cur && cur.address) || '', t: x.t || 0 };
+      // Vom Administrator geleerte Adresse (addrCleared) wird übernommen, sonst bleibt eine lokale Adresse erhalten
+      const rec = { name: x.name, address: x.address || (x.addrCleared ? '' : (cur && cur.address) || ''), t: x.t || 0 };
+      if (!x.address && x.addrCleared) rec.addrCleared = x.addrCleared;
       if (Array.isArray(x.sites)) rec.sites = x.sites; else if (cur && Array.isArray(cur.sites)) rec.sites = cur.sites;
       if (!cur || cur.name !== rec.name || cur.address !== rec.address || !sameSites(cur.sites, rec.sites)) { state.customers[key] = rec; changed = true; }
     });
@@ -2609,7 +2631,7 @@ function pushLocalCustomers() {
   Object.entries(state.customers).forEach(([key, c]) => {
     const r = cloud.remote[key];
     if (!r) ops.push({ key, data: { key, name: c.name, address: c.address || '', sites: Array.isArray(c.sites) ? c.sites : [], t: c.t || Date.now(), by, del: false } });
-    else if (!r.del && !r.address && c.address) ops.push({ key, data: { address: c.address, t: Date.now(), by } });
+    else if (!r.del && !r.address && c.address && !(r.addrCleared && (c.t || 0) <= (r.t || 0))) ops.push({ key, data: { address: c.address, t: Date.now(), by } });
   });
   if (!ops.length) return;
   for (let i = 0; i < ops.length; i += 400) {
@@ -2719,6 +2741,7 @@ function updateSyncUI() {
     else lines.push(`Aufmaßnummern: ${cloud.aufmass.length} geladen`);
   }
   $('syncStatus').innerHTML = lines.join('<br>');
+  try { renderAdminCard(); } catch (e) { /* ignore */ }
 }
 
 
@@ -3150,4 +3173,155 @@ function saveNewSite() {
     .observe(backdrop, { attributes: true, attributeFilter: ['class'] });
   // Wird der Inhalt eines offenen Fensters ersetzt (z. B. Warnung → Bearbeiten), wieder nach oben
   new MutationObserver(() => { if (locked) { modal.scrollTop = 0; } }).observe(modal, { childList: true });
+})();
+
+// ---- v34: Administrator (Passwort) ----
+// Das Admin-Passwort liegt nur als Hash (PBKDF2-SHA256, 150 000 Runden, zufälliges Salz) in
+// Firestore unter appconfig/admin und gilt damit auf allen Geräten. Nach Eingabe des Passworts
+// ist der Admin-Modus auf diesem Gerät 30 Minuten aktiv (nur im Speicher, nicht dauerhaft).
+// Admin darf: Kundenadressen komplett leeren (wird über „addrCleared“ an alle verteilt).
+const ADMIN_MINUTES = 30;
+
+function isAdmin() { return Date.now() < adminUntil; }
+function adminDocRef() { return cloud.db.collection('appconfig').doc('admin'); }
+const b64 = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)));
+const unb64 = (str) => Uint8Array.from(atob(str), ch => ch.charCodeAt(0));
+
+async function hashPassword(pw, saltB64, iter) {
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(pw), 'PBKDF2', false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: unb64(saltB64), iterations: iter }, key, 256);
+  return b64(bits);
+}
+
+async function loadAdminCfg() {
+  if (!cloud.user || !cloud.db) { adminCfg = undefined; return; }
+  try {
+    const snap = await adminDocRef().get();
+    adminCfg = snap.exists && snap.data() && snap.data().hash ? snap.data() : null;
+  } catch (e) {
+    adminCfg = undefined;
+    if (e && e.code === 'permission-denied') adminCfg = 'denied';
+  }
+}
+
+// Kleiner Passwort-Dialog im App-Fenster (statt prompt(), damit nichts im Klartext sichtbar ist)
+function askPasswords(title, fields, okLabel) {
+  return new Promise((resolve) => {
+    const modal = $('editModal');
+    modal.innerHTML = `
+      <h3 style="display:flex; align-items:center; gap:10px;"><span class="ht ht-ink"><svg class="ic" aria-hidden="true"><use href="#i-shield"/></svg></span>${escapeHtml(title)}</h3>
+      ${fields.map((f, i) => `<label for="pw-${i}">${escapeHtml(f)}</label><input type="password" id="pw-${i}" autocomplete="${i === 0 && fields.length === 1 ? 'current-password' : 'new-password'}">`).join('')}
+      <div class="hint" id="pw-msg" style="color:var(--red); min-height:1em;"></div>
+      <div class="btn-block-row" style="margin-top:12px;">
+        <button class="btn btn-secondary" id="pw-cancel">Abbrechen</button>
+        <button class="btn btn-primary" id="pw-ok">${escapeHtml(okLabel || 'OK')}</button>
+      </div>`;
+    const done = (val) => { closeEditModal(); resolve(val); };
+    modal.querySelector('#pw-cancel').addEventListener('click', () => done(null));
+    const submit = () => done(fields.map((f, i) => modal.querySelector('#pw-' + i).value));
+    modal.querySelector('#pw-ok').addEventListener('click', submit);
+    modal.querySelectorAll('input').forEach(inp => inp.addEventListener('keydown', ev => { if (ev.key === 'Enter') submit(); }));
+    $('editModalBackdrop').classList.add('show');
+    setTimeout(() => { const f = modal.querySelector('#pw-0'); if (f) f.focus(); }, 50);
+  });
+}
+
+// Admin-Rechte sicherstellen: ist der Modus nicht aktiv, Passwort abfragen.
+// Öffnet dabei ein eigenes Fenster; der vorherige Dialog wird danach wiederhergestellt.
+async function requireAdmin() {
+  if (isAdmin()) return true;
+  const modal = $('editModal');
+  const prevHtml = modal.innerHTML;
+  const prevNodes = [...modal.childNodes];
+  const ok = await adminLogin();
+  // vorherigen Dialog (mit seinen Event-Handlern) zurückholen
+  modal.innerHTML = '';
+  prevNodes.forEach(n => modal.appendChild(n));
+  if (!modal.childNodes.length) modal.innerHTML = prevHtml;
+  $('editModalBackdrop').classList.add('show');
+  return ok;
+}
+
+async function adminLogin() {
+  if (!cloud.user) { showToast('Für den Administrator bitte zuerst anmelden (Wolken-Symbol oben).', 4500); return false; }
+  await loadAdminCfg();
+  if (adminCfg === 'denied') { showToast('Administrator noch nicht freigeschaltet (Firestore-Regel für „appconfig“ fehlt).', 5000); return false; }
+  if (adminCfg === undefined) { showToast('Administrator-Daten konnten nicht geladen werden (Internet?).', 4500); return false; }
+  if (adminCfg === null) { showToast('Es ist noch kein Admin-Passwort festgelegt (Einstellungen → Administrator).', 4500); return false; }
+  const res = await askPasswords('Administrator', ['Admin-Passwort'], 'Entsperren');
+  if (!res) return false;
+  const h = await hashPassword(res[0], adminCfg.salt, adminCfg.iter || 150000);
+  if (h !== adminCfg.hash) { showToast('Falsches Passwort.'); return false; }
+  adminUntil = Date.now() + ADMIN_MINUTES * 60000;
+  renderAdminCard();
+  showToast(`Administrator-Modus aktiv (${ADMIN_MINUTES} Min).`);
+  return true;
+}
+
+async function adminSetPassword() {
+  if (!cloud.user) { showToast('Bitte zuerst anmelden.'); return; }
+  await loadAdminCfg();
+  if (adminCfg === 'denied') { showToast('Firestore-Regel für „appconfig“ fehlt – siehe Hinweis.', 5000); return; }
+  if (adminCfg === undefined) { showToast('Keine Verbindung (Internet?).'); return; }
+  const changing = !!adminCfg;
+  const fields = changing ? ['Bisheriges Admin-Passwort', 'Neues Admin-Passwort', 'Neues Passwort wiederholen'] : ['Neues Admin-Passwort', 'Passwort wiederholen'];
+  const res = await askPasswords(changing ? 'Admin-Passwort ändern' : 'Admin-Passwort festlegen', fields, 'Speichern');
+  if (!res) return;
+  let [oldPw, pw1, pw2] = changing ? res : [null, res[0], res[1]];
+  if (changing) {
+    const h = await hashPassword(oldPw, adminCfg.salt, adminCfg.iter || 150000);
+    if (h !== adminCfg.hash) { showToast('Bisheriges Passwort ist falsch.'); return; }
+  }
+  if (!pw1 || pw1.length < 6) { showToast('Das Passwort muss mindestens 6 Zeichen haben.'); return; }
+  if (pw1 !== pw2) { showToast('Die beiden Passwörter stimmen nicht überein.'); return; }
+  const salt = b64(crypto.getRandomValues(new Uint8Array(16)));
+  const iter = 150000;
+  const hash = await hashPassword(pw1, salt, iter);
+  try {
+    await adminDocRef().set({ salt, hash, iter, t: Date.now(), by: cloud.user.email || cloud.user.uid });
+  } catch (e) {
+    showToast(e && e.code === 'permission-denied' ? 'Keine Berechtigung – Firestore-Regel für „appconfig“ fehlt.' : 'Speichern fehlgeschlagen (Internet?).', 5000);
+    return;
+  }
+  adminCfg = { salt, hash, iter };
+  adminUntil = Date.now() + ADMIN_MINUTES * 60000;
+  renderAdminCard();
+  showToast(changing ? 'Admin-Passwort geändert.' : 'Admin-Passwort festgelegt – Administrator-Modus aktiv.', 4000);
+}
+
+function renderAdminCard() {
+  const st = $('adminStatus'), btns = $('adminBtns');
+  if (!st || !btns) return;
+  let text, html = '';
+  if (!cloud.user) {
+    text = 'Zum Einrichten oder Entsperren bitte oben anmelden.';
+  } else if (adminCfg === 'denied') {
+    text = 'Noch nicht freigeschaltet: In der Firebase-Konsole fehlt die Regel für „appconfig“.';
+  } else if (isAdmin()) {
+    const min = Math.max(1, Math.round((adminUntil - Date.now()) / 60000));
+    text = `<span class="status-ok"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg>Administrator-Modus aktiv (noch ${min} Min)</span><br>Im Kundenstamm kannst du jetzt Adressen leeren.`;
+    html = `<button class="btn btn-secondary" id="adminPwBtn">Passwort ändern</button><button class="btn btn-secondary" id="adminLogoutBtn">Beenden</button>`;
+  } else if (adminCfg === null) {
+    text = 'Noch kein Admin-Passwort festgelegt. Wer es festlegt und kennt, darf im Kundenstamm Adressen leeren.';
+    html = `<button class="btn btn-primary" id="adminPwBtn">Admin-Passwort festlegen</button>`;
+  } else {
+    text = 'Mit dem Admin-Passwort lassen sich im Kundenstamm Adressen leeren.';
+    html = `<button class="btn btn-secondary" id="adminLoginBtn">Als Administrator entsperren</button>`;
+  }
+  st.innerHTML = text;
+  btns.innerHTML = html;
+  const pw = $('adminPwBtn'), li = $('adminLoginBtn'), lo = $('adminLogoutBtn');
+  if (pw) pw.addEventListener('click', adminSetPassword);
+  if (li) li.addEventListener('click', adminLogin);
+  if (lo) lo.addEventListener('click', () => { adminUntil = 0; renderAdminCard(); showToast('Administrator-Modus beendet.'); });
+}
+
+// Beim Öffnen der Einstellungen bzw. nach der Anmeldung Status laden
+(function initAdmin() {
+  const refresh = async () => { await loadAdminCfg(); renderAdminCard(); };
+  const btn = $('openSettingsBtn');
+  if (btn) btn.addEventListener('click', () => setTimeout(refresh, 50));
+  window.addEventListener('hashchange', () => { if (location.hash === '#einstellungen') refresh(); });
+  setInterval(() => { if (adminUntil && !isAdmin()) { adminUntil = 0; renderAdminCard(); } }, 30000);
+  renderAdminCard();
 })();
