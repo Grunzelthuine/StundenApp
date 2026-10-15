@@ -7,6 +7,7 @@ const STORE_KEY = 'stundenzettel_v1';
 let state = loadState();
 let adminUntil = 0;   // v34: Administrator-Modus aktiv bis (ms)
 let adminCfg = undefined; // v34: { salt, hash, iter } | null = nicht festgelegt | undefined = unbekannt | 'denied'
+const openDayCards = new Set(); // v35: aufgeklappte Tageskarten (bleiben beim Neuzeichnen offen)
 let selectedSite = null; // v32: gewählte Baustelle im Formular { key, id }
 
 function loadState() {
@@ -1031,13 +1032,23 @@ function renderEntries() {
   }
   const groups = groupedEntriesByDate();
   wrap.innerHTML = '';
+  // v35: pro Tag eine aufklappbare Karte – zugeklappt nur Wochentag, Datum und Gesamtstunden
+  const WOCHENTAGE = ['Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag'];
   groups.forEach(g => {
     const total = dailyTotalHours(g.entries);
-    const gDiv = document.createElement('div');
-    gDiv.className = 'entry-group';
-    const groupLabel = g.vacation ? entryDateLabel(g.entries[0], true) : formatDateLong(g.date);
-    gDiv.innerHTML = `<div class="entry-group-date"><span>${g.vacation ? '<svg class="ic" style="width:16px;height:16px;color:var(--green);margin:-2px 6px 0 0" aria-hidden="true"><use href="#i-sun"/></svg>' : ''}${groupLabel}</span><span class="total">Gesamt: ${formatHoursDE(total)} Std</span></div>`;
+    const gKey = g.vacation ? 'u:' + g.entries[0].id : 'd:' + g.date;
+    const det = document.createElement('details');
+    det.className = 'day-card' + (g.vacation ? ' vacation' : '');
+    if (openDayCards.has(gKey)) det.open = true;
+    det.addEventListener('toggle', () => { det.open ? openDayCards.add(gKey) : openDayCards.delete(gKey); });
+    const d0 = new Date(g.date + 'T00:00:00');
+    const missingNr = g.entries.some(e => !isVacation(e) && e.aufmass === 'ja' && !String(e.aufmassNr || '').trim());
+    const title = g.vacation
+      ? `<span class="dc-day"><svg class="ic" aria-hidden="true" style="width:16px;height:16px;color:var(--green);margin:-2px 6px 0 0"><use href="#i-sun"/></svg>Urlaub</span><span class="dc-date">${entryDateLabel(g.entries[0], true)}</span>`
+      : `<span class="dc-day">${WOCHENTAGE[d0.getDay()]}</span><span class="dc-date">${formatDateShort(g.date)}${g.date.slice(0, 4)}${g.entries.length > 1 ? ` · ${g.entries.length} Einträge` : ''}${missingNr ? ' · <span class="dc-warn">Aufmaß-Nr. fehlt</span>' : ''}</span>`;
+    det.innerHTML = `<summary><span class="dc-title">${title}</span><span class="dc-total">${formatHoursDE(total)} Std</span></summary>`;
     const list = document.createElement('div');
+    list.className = 'day-card-body';
     g.entries.forEach(e => {
       const mins = computeNetMinutes(e);
       const timeLabel = entryTimeLabel(e);
@@ -1057,8 +1068,8 @@ function renderEntries() {
       item.querySelector('.del').addEventListener('click', () => deleteEntry(e.id));
       list.appendChild(item);
     });
-    gDiv.appendChild(list);
-    wrap.appendChild(gDiv);
+    det.appendChild(list);
+    wrap.appendChild(det);
   });
 }
 

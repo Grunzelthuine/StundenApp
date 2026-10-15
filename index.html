@@ -274,6 +274,21 @@
     border-radius:22px; padding:8px 14px; font-size:14px; font-weight:600; font-family:inherit; cursor:pointer;}
   .admin-clear-btn svg.ic{width:16px; height:16px;}
   #adminBtns:empty{display:none;}
+  .day-card{background:#fff; border:1px solid var(--line); border-radius:14px; margin-bottom:8px; overflow:hidden;}
+  .day-card.vacation{background:var(--green-tint); border-color:#c7e8d8;}
+  .day-card > summary{list-style:none; cursor:pointer; display:flex; align-items:center; gap:10px; padding:13px 14px; min-height:56px;}
+  .day-card > summary::-webkit-details-marker{display:none;}
+  .day-card > summary::after{content:""; width:8px; height:8px; border-right:2px solid var(--muted); border-bottom:2px solid var(--muted); transform:rotate(45deg) translateY(-2px); transition:transform .2s; flex:0 0 auto; margin-left:2px;}
+  .day-card[open] > summary::after{transform:rotate(-135deg) translateY(-2px);}
+  .day-card[open] > summary{border-bottom:1px solid var(--line);}
+  .dc-title{flex:1; min-width:0; display:flex; flex-direction:column;}
+  .dc-day{font-size:15.5px; font-weight:700; color:var(--text); display:flex; align-items:center;}
+  .dc-date{font-size:13px; color:var(--muted); margin-top:1px;}
+  .dc-warn{color:var(--orange-ink); font-weight:600;}
+  .dc-total{font-size:15px; font-weight:800; color:var(--orange-ink); background:var(--orange-tint); border-radius:20px; padding:4px 12px; white-space:nowrap; font-variant-numeric:tabular-nums;}
+  .day-card.vacation .dc-total{color:var(--green); background:#fff;}
+  .day-card-body{padding:10px 10px 2px;}
+  .day-card-body .entry-item{margin-bottom:8px;}
   .loc-btn{display:inline-flex; align-items:center; gap:6px; margin-top:8px; border:none; background:var(--blue-tint); color:var(--blue);
     border-radius:22px; padding:8px 14px; font-size:14px; font-weight:600; font-family:inherit; cursor:pointer;}
   .loc-btn svg.ic{width:17px; height:17px;}
@@ -478,7 +493,7 @@
   </div>
 
   <button type="button" class="btn btn-secondary settings-open" id="openSettingsBtn"><span class="ht ht-gray"><svg class="ic" aria-hidden="true"><use href="#i-settings"/></svg></span>Einstellungen &amp; Sicherung</button>
-  <div class="footer-note">Version 34</div>
+  <div class="footer-note">Version 35</div>
 </main>
 
 <main id="settingsView" style="display:none;">
@@ -528,7 +543,7 @@
     </details>
   </div>
 
-  <div class="footer-note">Einträge bleiben lokal auf diesem Gerät gespeichert. Kundenstamm und Aufmaßnummern werden nach der Anmeldung abgeglichen.<br>Version 34</div>
+  <div class="footer-note">Einträge bleiben lokal auf diesem Gerät gespeichert. Kundenstamm und Aufmaßnummern werden nach der Anmeldung abgeglichen.<br>Version 35</div>
 </main>
 
 <div class="toast" id="toast"></div>
