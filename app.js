@@ -64,6 +64,7 @@ function computeNetMinutes(entry) {
   } else {
     mins = Math.round(entry.durationHours * 60);
   }
+  mins += extraTimesMinutes(entry); // v36: weitere Zeiten zum selben Eintrag
   mins -= (entry.breakMinutes || 0);
   if (mins < 0) mins = 0;
   return mins;
@@ -240,7 +241,8 @@ function entryDateLabel(e, long = false) {
 
 function entryTimeLabel(e) {
   if (isVacation(e)) return `${e.days} ${e.days === 1 ? 'Urlaubstag' : 'Urlaubstage'} × ${URLAUB_STUNDEN_PRO_TAG} Std`;
-  return e.timeMode === 'range' ? `${e.start}–${e.end}` : `${formatHoursDE(e.durationHours)} Std`;
+  const base = e.timeMode === 'range' ? `${e.start}–${e.end}` : `${formatHoursDE(e.durationHours)} Std`;
+  return base + (Array.isArray(e.extraTimes) ? e.extraTimes.map(t => ' + ' + extraTimeLabel(t)).join('') : '');
 }
 
 // ---------- Klartext-Erfassung (Freitext-Parser) ----------
@@ -498,6 +500,9 @@ function lastEndTimeForDate(dateISO) {
     if (e.date === dateISO && e.timeMode === 'range' && e.end && !isVacation(e)) {
       if (!latest || parseHM(e.end) > parseHM(latest)) latest = e.end;
     }
+    if (e.date === dateISO && Array.isArray(e.extraTimes)) e.extraTimes.forEach(t => {
+      if (t.timeMode === 'range' && t.end && (!latest || parseHM(t.end) > parseHM(latest))) latest = t.end;
+    });
   });
   return latest;
 }
@@ -1062,9 +1067,12 @@ function renderEntries() {
         </div>
         <div class="actions">
           <button class="icon-btn edit" title="Bearbeiten" aria-label="Bearbeiten"><svg class="ic" aria-hidden="true"><use href="#i-edit"/></svg></button>
+          ${isVacation(e) ? '' : '<button class="icon-btn add-time" title="Zeit hinzufügen" aria-label="Weitere Zeit hinzufügen"><svg class="ic" aria-hidden="true"><use href="#i-clock-plus"/></svg></button>'}
           <button class="icon-btn del" title="Löschen" aria-label="Löschen"><svg class="ic" aria-hidden="true"><use href="#i-trash"/></svg></button>
         </div>`;
       item.querySelector('.edit').addEventListener('click', () => isVacation(e) ? openVacationEditModal(e) : openEditModal(e.id));
+      const addT = item.querySelector('.add-time');
+      if (addT) addT.addEventListener('click', () => openAddTimeModal(e.id));
       item.querySelector('.del').addEventListener('click', () => deleteEntry(e.id));
       list.appendChild(item);
     });
@@ -1119,6 +1127,7 @@ function openEditModal(id) {
     <div id="m-durationFields" style="margin-top:10px; display:${e.timeMode==='duration'?'block':'none'};">
       <label>Stunden</label><input type="number" id="m-duration" step="0.25" value="${e.durationHours||''}">
     </div>
+    <div id="m-extraHost"></div>
     <label>Pause (Minuten)</label>
     <input type="number" id="m-break" value="${e.breakMinutes||0}">
     <label>Aufmaß</label>
@@ -1133,6 +1142,15 @@ function openEditModal(id) {
     </div>
   `;
   let mTimeMode = e.timeMode, mAufmass = e.aufmass;
+  let mExtras = Array.isArray(e.extraTimes) ? e.extraTimes.map(t => ({ ...t })) : [];
+  const renderExtras = () => {
+    const host = modal.querySelector('#m-extraHost');
+    if (!mExtras.length) { host.innerHTML = ''; return; }
+    host.innerHTML = `<label>Weitere Zeiten</label>` + mExtras.map((t, i) =>
+      `<div class="extra-row"><span>+ ${escapeHtml(extraTimeLabel(t))}</span><button type="button" class="link-btn" data-xi="${i}" style="color:var(--red); padding:0;">Entfernen</button></div>`).join('');
+    host.querySelectorAll('[data-xi]').forEach(b => b.addEventListener('click', () => { mExtras.splice(+b.dataset.xi, 1); renderExtras(); }));
+  };
+  renderExtras();
   modal.querySelector('#m-nrHost').innerHTML = aufmassPickerHtml('m');
   bindAufmassPicker('m');
   refreshAufmassPicker('m', e.customer);
@@ -1195,6 +1213,7 @@ function openEditModal(id) {
     e.breakMinutes = parseFloat(modal.querySelector('#m-break').value) || 0;
     e.aufmass = mAufmass;
     e.aufmassNr = mAufmass === 'ja' ? getAufmassNr('m') : '';
+    if (mExtras.length) e.extraTimes = mExtras; else delete e.extraTimes;
     e.address = modal.querySelector('#m-address').value.trim();
     const sid = modal.querySelector('#m-site').value;
     if (!sid) { delete e.siteId; delete e.siteName; delete e.siteAddress; }
@@ -3336,3 +3355,103 @@ function renderAdminCard() {
   setInterval(() => { if (adminUntil && !isAdmin()) { adminUntil = 0; renderAdminCard(); } }, 30000);
   renderAdminCard();
 })();
+
+// ---- v36: Weitere Zeit zu einem bestehenden Eintrag ----
+// Beispiel: vormittags bei Kunde A, kurz bei B, nachmittags wieder bei A → bei A per „+ Zeit“
+// einen zweiten Zeitraum (oder eine feste Stundenzahl) ergänzen, statt einen zweiten Eintrag
+// mit fast gleicher Beschreibung anzulegen. Gespeichert als e.extraTimes = [{ id, timeMode,
+// start, end } | { id, timeMode: 'duration', durationHours }]; zählt in die Netto-Zeit des
+// Eintrags (Pause wird wie bisher einmal pro Eintrag abgezogen) und damit auch ins PDF.
+function extraTimeMinutes(t) {
+  if (!t) return 0;
+  if (t.timeMode === 'range') {
+    let a = parseHM(t.start), b = parseHM(t.end);
+    if (b < a) b += 24 * 60;
+    return Math.max(0, b - a);
+  }
+  return Math.max(0, Math.round((parseFloat(t.durationHours) || 0) * 60));
+}
+function extraTimesMinutes(e) { return Array.isArray(e.extraTimes) ? e.extraTimes.reduce((sum, t) => sum + extraTimeMinutes(t), 0) : 0; }
+function extraTimeLabel(t) { return t.timeMode === 'range' ? `${t.start}–${t.end}` : `${formatHoursDE(parseFloat(t.durationHours) || 0)} Std`; }
+
+function openAddTimeModal(id) {
+  const e = state.entries.find(x => x.id === id);
+  if (!e) return;
+  const fromDefault = lastEndTimeForDate(e.date) || (e.timeMode === 'range' ? e.end : '12:00');
+  let toIdx = roundUpToQuarterIndex(new Date());
+  let toDefault = quarterIndexToHHMM(toIdx);
+  if (e.date !== todayISO() || parseHM(toDefault) <= parseHM(fromDefault)) {
+    const m = Math.min(23 * 60 + 45, parseHM(fromDefault) + 60);
+    toDefault = `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+  }
+  let mode = 'range';
+  const modal = $('editModal');
+  modal.innerHTML = `
+    <h3 style="display:flex; align-items:center; gap:10px;"><span class="ht ht-orange"><svg class="ic" aria-hidden="true"><use href="#i-clock-plus"/></svg></span>Zeit hinzufügen</h3>
+    <div class="entry-item" style="margin-bottom:4px;">
+      <div class="info">
+        <div class="customer">${escapeHtml(e.customer)} ${siteBadge(e)}</div>
+        <div class="desc">${escapeHtml(e.desc)}</div>
+        <div class="meta">${formatDateLong(e.date)} · bisher ${entryTimeLabel(e)} · ${formatHoursDE(minutesToHoursDecimal(computeNetMinutes(e)))} Std</div>
+      </div>
+    </div>
+    <label>Weitere Zeit</label>
+    <div class="segmented" id="at-mode">
+      <button type="button" class="active" data-mode="range">Uhrzeit von–bis</button>
+      <button type="button" data-mode="duration">Stundenzahl</button>
+    </div>
+    <div id="at-range" class="row" style="margin-top:10px;">
+      <div><label for="at-from" style="margin-top:0;">Von</label><input type="time" id="at-from" value="${fromDefault}"></div>
+      <div><label for="at-to" style="margin-top:0;">Bis</label><input type="time" id="at-to" value="${toDefault}"></div>
+    </div>
+    <div id="at-dur" style="display:none; margin-top:10px;">
+      <label for="at-hours" style="margin-top:0;">Stunden</label>
+      <input type="text" id="at-hours" inputmode="decimal" autocomplete="off" placeholder="z. B. 1,5">
+    </div>
+    <div class="hours-total" id="at-sum"></div>
+    <div class="btn-block-row" style="margin-top:16px;">
+      <button class="btn btn-secondary" id="at-cancel">Abbrechen</button>
+      <button class="btn btn-primary" id="at-save">Hinzufügen</button>
+    </div>`;
+  const read = () => {
+    if (mode === 'range') {
+      const a = modal.querySelector('#at-from').value, b = modal.querySelector('#at-to').value;
+      if (!a || !b) return { err: 'Bitte Von und Bis angeben.' };
+      if (parseHM(b) <= parseHM(a)) return { err: '„Bis“ muss nach „Von“ liegen.' };
+      return { t: { id: uid(), timeMode: 'range', start: a, end: b } };
+    }
+    const h = parseFloat(String(modal.querySelector('#at-hours').value).replace(',', '.'));
+    if (!(h > 0)) return { err: 'Bitte eine Stundenzahl angeben.' };
+    return { t: { id: uid(), timeMode: 'duration', durationHours: h } };
+  };
+  const updateSum = () => {
+    const r = read();
+    const box = modal.querySelector('#at-sum');
+    if (!r.t) { box.innerHTML = ''; return; }
+    const total = computeNetMinutes({ ...e, extraTimes: [...(e.extraTimes || []), r.t] });
+    box.innerHTML = `<span class="ht-label">Neu gesamt<span class="ht-sub">+ ${formatHoursDE(minutesToHoursDecimal(extraTimeMinutes(r.t)))} Std</span></span><span class="ht-value">${formatHoursDE(minutesToHoursDecimal(total))}<small>Std</small></span>`;
+  };
+  modal.querySelector('#at-mode').addEventListener('click', (ev) => {
+    const b = ev.target.closest('button[data-mode]'); if (!b) return;
+    mode = b.dataset.mode;
+    modal.querySelectorAll('#at-mode button').forEach(x => x.classList.toggle('active', x === b));
+    modal.querySelector('#at-range').style.display = mode === 'range' ? 'flex' : 'none';
+    modal.querySelector('#at-dur').style.display = mode === 'duration' ? 'block' : 'none';
+    updateSum();
+  });
+  modal.querySelectorAll('input').forEach(i => i.addEventListener('input', updateSum));
+  updateSum();
+  modal.querySelector('#at-cancel').addEventListener('click', closeEditModal);
+  modal.querySelector('#at-save').addEventListener('click', () => {
+    const r = read();
+    if (r.err) { showToast(r.err); return; }
+    e.extraTimes = [...(Array.isArray(e.extraTimes) ? e.extraTimes : []), r.t];
+    saveState();
+    openDayCards.add('d:' + e.date);
+    renderEntries();
+    closeEditModal();
+    showToast(`Zeit hinzugefügt – ${e.customer}: jetzt ${formatHoursDE(minutesToHoursDecimal(computeNetMinutes(e)))} Std.`, 3500);
+    if (!timeTouched) updateTimeDefaults();
+  });
+  $('editModalBackdrop').classList.add('show');
+}
