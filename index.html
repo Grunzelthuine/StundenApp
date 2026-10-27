@@ -291,6 +291,10 @@
   .day-card-body .entry-item{margin-bottom:8px;}
   .extra-row{display:flex; justify-content:space-between; align-items:center; background:var(--field); border-radius:12px; padding:10px 14px; margin-bottom:6px; font-weight:600;}
   .entry-item .icon-btn.add-time{background:var(--orange-tint); color:var(--orange-ink);}
+  .draft-banner{display:flex; align-items:center; gap:8px; background:var(--blue-tint); color:var(--blue); border-radius:12px; padding:10px 12px; margin:0 0 12px; font-size:13.5px; font-weight:600; line-height:1.35;}
+  .draft-banner svg.ic{width:18px; height:18px; flex:0 0 auto;}
+  .draft-banner span{flex:1;}
+  .draft-banner .link-btn{padding:0; color:var(--blue); text-decoration:underline; white-space:nowrap;}
   .loc-btn{display:inline-flex; align-items:center; gap:6px; margin-top:8px; border:none; background:var(--blue-tint); color:var(--blue);
     border-radius:22px; padding:8px 14px; font-size:14px; font-weight:600; font-family:inherit; cursor:pointer;}
   .loc-btn svg.ic{width:17px; height:17px;}
@@ -350,6 +354,11 @@
   <div class="card">
     <h2><span class="ht ht-orange"><svg class="ic" aria-hidden="true"><use href="#i-pencil-plus"/></svg></span>Neuer Eintrag</h2>
 
+    <div class="draft-banner" id="draftBanner" style="display:none;">
+      <svg class="ic" aria-hidden="true"><use href="#i-restore"/></svg>
+      <span id="draftBannerText">Angefangener Eintrag wiederhergestellt.</span>
+      <button type="button" class="link-btn" id="draftDiscardBtn">Verwerfen</button>
+    </div>
     <details class="dictate-box" id="freetextBox">
       <summary><svg class="ic" aria-hidden="true"><use href="#i-mic"/></svg>Per Satz erfassen</summary>
       <textarea id="f-freetext" rows="3" placeholder="z. B. „Ich war heute von 7:30 bis 15:30 bei Müller und habe Lampen installiert, 45 Minuten Pause.“"></textarea>
@@ -496,7 +505,7 @@
   </div>
 
   <button type="button" class="btn btn-secondary settings-open" id="openSettingsBtn"><span class="ht ht-gray"><svg class="ic" aria-hidden="true"><use href="#i-settings"/></svg></span>Einstellungen &amp; Sicherung</button>
-  <div class="footer-note">Version 36</div>
+  <div class="footer-note">Version 37</div>
 </main>
 
 <main id="settingsView" style="display:none;">
@@ -546,7 +555,7 @@
     </details>
   </div>
 
-  <div class="footer-note">Einträge bleiben lokal auf diesem Gerät gespeichert. Kundenstamm und Aufmaßnummern werden nach der Anmeldung abgeglichen.<br>Version 36</div>
+  <div class="footer-note">Einträge bleiben lokal auf diesem Gerät gespeichert. Kundenstamm und Aufmaßnummern werden nach der Anmeldung abgeglichen.<br>Version 37</div>
 </main>
 
 <div class="toast" id="toast"></div>

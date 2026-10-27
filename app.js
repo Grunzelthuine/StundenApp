@@ -8,6 +8,9 @@ let state = loadState();
 let adminUntil = 0;   // v34: Administrator-Modus aktiv bis (ms)
 let adminCfg = undefined; // v34: { salt, hash, iter } | null = nicht festgelegt | undefined = unbekannt | 'denied'
 const openDayCards = new Set(); // v35: aufgeklappte Tageskarten (bleiben beim Neuzeichnen offen)
+const DRAFT_KEY = 'stundenzettel_draft_v1'; // v37: Entwurf des Formulars
+let draftTimer = null;
+let draftRestoring = false;
 let selectedSite = null; // v32: gewählte Baustelle im Formular { key, id }
 
 function loadState() {
@@ -427,6 +430,7 @@ function applyFreeTextResult(result) {
     $('durationFields').style.display = 'none';
     setStartSliderHHMM(result.start);
     setEndSliderHHMM(result.end);
+    startPinned = endPinned = true;
     timeTouched = true;
   } else if (result.timeMode === 'duration') {
     timeMode = 'duration';
@@ -434,6 +438,7 @@ function applyFreeTextResult(result) {
     $('rangeFields').style.display = 'none';
     $('durationFields').style.display = 'block';
     $('f-duration').value = result.durationHours;
+    startPinned = endPinned = true;
     timeTouched = true;
   }
 
@@ -642,14 +647,17 @@ function clampTimeSliders(startEl, endEl, movedEl) {
 
 // Hat der Nutzer die Zeiten (oder das Datum) für den aktuellen Eintrag schon selbst angefasst?
 // Solange nicht, werden Von/Bis automatisch aktuell gehalten.
-let timeTouched = false;
+let timeTouched = false; // v37: nur noch „beide Zeiten von Hand gesetzt“ (= startPinned && endPinned)
 let dateTouched = false;
+let startPinned = false;  // v37: „Von“ von Hand gesetzt → wird nicht mehr automatisch geändert
+let endPinned = false;    // v37: „Bis“ von Hand gesetzt → läuft nicht mehr automatisch mit der Uhr
 
 function updateTimeDefaults() {
   const dateVal = $('f-date').value || todayISO();
   const lastEnd = lastEndTimeForDate(dateVal);
-  const startHHMM = lastEnd || '07:30';
-  setStartSliderHHMM(startHHMM);
+  const startHHMM = startPinned ? (getTP($('f-start-label')) || lastEnd || '07:30') : (lastEnd || '07:30');
+  if (!startPinned) setStartSliderHHMM(startHHMM);
+  if (endPinned) { timeTouched = startPinned; updateComputedHint(); return; }
   // Bis = jetzt, auf die nächste Viertelstunde aufgerundet – mindestens 15 Min nach "Von"
   let endIdx = roundUpToQuarterIndex(new Date());
   const startMin = parseHM(startHHMM);
@@ -657,7 +665,7 @@ function updateTimeDefaults() {
   let endHHMM = quarterIndexToHHMM(endIdx);
   if (parseHM(endHHMM) <= startMin) endHHMM = '23:59';
   setEndSliderHHMM(endHHMM);
-  timeTouched = false;
+  timeTouched = startPinned && endPinned;
   updateComputedHint();
 }
 
@@ -667,15 +675,18 @@ function refreshTimeDefaultsIfUntouched() {
   if (document.visibilityState === 'hidden') return;
   if ($('editModalBackdrop').classList.contains('show')) return;
   if (!dateTouched && $('f-date').value !== todayISO()) $('f-date').value = todayISO();
-  if (!timeTouched) updateTimeDefaults();
+  if (!(startPinned && endPinned)) updateTimeDefaults();
 }
 
 function initAutoTimeRefresh() {
-  const markTime = () => { timeTouched = true; };
-  ['f-start', 'f-end', 'f-duration', 'f-break-custom'].forEach(id => $(id).addEventListener('input', markTime));
-  $('f-start-label').querySelector('input').addEventListener('change', markTime);
-  $('f-end-label').querySelector('input').addEventListener('change', markTime);
-  $('timeModeSeg').addEventListener('click', markTime);
+  // v37: Von und Bis getrennt: Wer bei Ankunft „Von“ setzt, behält es; „Bis“ läuft weiter mit
+  // der aktuellen Uhrzeit mit, bis es selbst von Hand gesetzt wird.
+  const pinStart = () => { startPinned = true; timeTouched = startPinned && endPinned; };
+  const pinEnd = () => { endPinned = true; timeTouched = startPinned && endPinned; };
+  $('f-start').addEventListener('input', pinStart);
+  $('f-start-label').querySelector('input').addEventListener('change', pinStart);
+  $('f-end').addEventListener('input', pinEnd);
+  $('f-end-label').querySelector('input').addEventListener('change', pinEnd);
   const markDate = () => { dateTouched = true; };
   $('f-date').addEventListener('change', markDate);
   $('datePrevBtn').addEventListener('click', markDate);
@@ -813,6 +824,7 @@ function initForm() {
   initVacationForm();
   initAutoTimeRefresh();
   updateComputedHint();
+  initDraft(); // v37: angefangenen Eintrag nach Neustart der App wiederherstellen
 }
 
 // ---------- Urlaub erfassen ----------
@@ -1005,6 +1017,9 @@ function resetEntryFormFields() {
   setAufmassNr('f', '');
   setAufmassUI('nein');
 
+  startPinned = endPinned = false;
+  dateTouched = false;
+  clearDraft();
   updateTimeDefaults(); // Von = letztes Bis desselben Tages (oder 07:30), Bis = jetzt aufgerundet
 }
 
@@ -3454,4 +3469,105 @@ function openAddTimeModal(id) {
     if (!timeTouched) updateTimeDefaults();
   });
   $('editModalBackdrop').classList.add('show');
+}
+
+// ---- v37: Angefangenen Eintrag automatisch sichern ----
+// iOS beendet die App im Hintergrund gern, um Speicher zu sparen; beim nächsten Öffnen startet
+// sie neu und das halb ausgefüllte Formular wäre weg. Deshalb wird jede Eingabe sofort als
+// Entwurf in localStorage gesichert und beim Start wiederhergestellt (max. 3 Tage alt).
+// (Zustandsvariablen DRAFT_KEY, draftTimer, draftRestoring stehen oben bei den übrigen globalen Variablen)
+
+function collectDraft() {
+  return {
+    v: 1, ts: Date.now(),
+    date: $('f-date').value, dateTouched,
+    customer: $('f-customer').value, address: $('f-customer-address').value,
+    addrForKey: typeof addrForKey !== 'undefined' ? addrForKey : null,
+    site: selectedSite, desc: $('f-desc').value, freetext: $('f-freetext').value,
+    timeMode, start: getTP($('f-start-label')), end: getTP($('f-end-label')), startPinned, endPinned,
+    duration: $('f-duration').value, breakMinutes, breakCustom: $('f-break-custom').value,
+    aufmass, aufmassNr: aufmass === 'ja' ? getAufmassNr('f') : ''
+  };
+}
+function draftHasContent(d) {
+  return !!(d && ((d.customer || '').trim() || (d.desc || '').trim() || (d.address || '').trim() || (d.freetext || '').trim() || d.aufmass === 'ja' || (d.duration || '').trim()));
+}
+function saveDraftNow() {
+  if (draftRestoring) return;
+  clearTimeout(draftTimer);
+  try {
+    const d = collectDraft();
+    if (draftHasContent(d)) localStorage.setItem(DRAFT_KEY, JSON.stringify(d));
+    else localStorage.removeItem(DRAFT_KEY);
+  } catch (e) { /* ignore */ }
+}
+function scheduleDraftSave() { clearTimeout(draftTimer); draftTimer = setTimeout(saveDraftNow, 250); }
+function clearDraft() {
+  clearTimeout(draftTimer);
+  try { localStorage.removeItem(DRAFT_KEY); } catch (e) { /* ignore */ }
+  const b = $('draftBanner'); if (b) b.style.display = 'none';
+}
+
+function restoreDraft(d) {
+  draftRestoring = true;
+  try {
+    if (d.date) { $('f-date').value = d.date; dateTouched = !!d.dateTouched || d.date !== todayISO(); }
+    $('f-freetext').value = d.freetext || '';
+    $('f-customer').value = d.customer || '';
+    if ((d.customer || '').trim()) { onCustomerInput(); hideSuggest(); }
+    $('f-customer-address').value = d.address || '';
+    if (typeof addrForKey !== 'undefined') addrForKey = d.addrForKey || (d.customer ? custKey(d.customer) : null);
+    try { updateAddressLabel(); } catch (e) { /* ignore */ }
+    if (d.site && d.site.key === custKey(d.customer || '')) selectedSite = d.site;
+    renderSiteRow();
+    $('f-desc').value = d.desc || '';
+    // Zeit
+    timeMode = d.timeMode === 'duration' ? 'duration' : 'range';
+    document.querySelectorAll('#timeModeSeg button').forEach(b => b.classList.toggle('active', b.dataset.mode === timeMode));
+    $('rangeFields').style.display = timeMode === 'range' ? 'block' : 'none';
+    $('durationFields').style.display = timeMode === 'duration' ? 'block' : 'none';
+    $('f-duration').value = d.duration || '';
+    startPinned = !!d.startPinned; endPinned = !!d.endPinned;
+    if (startPinned && d.start) setStartSliderHHMM(d.start);
+    if (endPinned && d.end) setEndSliderHHMM(d.end);
+    updateTimeDefaults(); // nicht festgehaltene Zeiten neu (Bis = jetzt)
+    // Pause
+    breakMinutes = d.breakMinutes || 0;
+    $('f-break-custom').value = d.breakCustom || '';
+    document.querySelectorAll('#breakBtns .qbtn').forEach(b => b.classList.toggle('active', !d.breakCustom && parseInt(b.dataset.break, 10) === breakMinutes));
+    // Aufmaß
+    setAufmassUI(d.aufmass === 'ja' ? 'ja' : 'nein');
+    if (d.aufmass === 'ja' && d.aufmassNr) setAufmassNr('f', d.aufmassNr);
+    updateComputedHint();
+  } finally {
+    draftRestoring = false;
+  }
+}
+
+function initDraft() {
+  const card = $('saveEntryBtn') && $('saveEntryBtn').closest('.card');
+  if (card) {
+    ['input', 'change'].forEach(ev => card.addEventListener(ev, scheduleDraftSave, true));
+    card.addEventListener('click', () => setTimeout(scheduleDraftSave, 50), true);
+  }
+  // Beim Wegwechseln sofort sichern (iOS beendet die App oft ohne weitere Vorwarnung)
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveDraftNow(); });
+  window.addEventListener('pagehide', saveDraftNow);
+
+  let d = null;
+  try { d = JSON.parse(localStorage.getItem(DRAFT_KEY)); } catch (e) { d = null; }
+  if (!d || !draftHasContent(d) || Date.now() - (d.ts || 0) > 3 * 864e5) { clearDraft(); return; }
+  restoreDraft(d);
+  const b = $('draftBanner');
+  if (b) {
+    const when = new Date(d.ts);
+    const sameDay = when.toDateString() === new Date().toDateString();
+    $('draftBannerText').textContent = `Angefangener Eintrag wiederhergestellt (${sameDay ? 'von ' : 'vom ' + when.toLocaleDateString('de-DE') + ', '}${when.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })} Uhr).`;
+    b.style.display = 'flex';
+    $('draftDiscardBtn').onclick = () => {
+      if (!confirm('Angefangenen Eintrag verwerfen und Formular leeren?')) return;
+      resetEntryFormFields();
+      showToast('Entwurf verworfen.');
+    };
+  }
 }
