@@ -29,6 +29,7 @@ function loadState() {
 
 function saveState() {
   try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (e) { /* ignore */ }
+  if (typeof scheduleAufmassStundenSync === 'function') scheduleAufmassStundenSync(); // v38
 }
 
 // ---------- Hilfsfunktionen ----------
@@ -2041,6 +2042,67 @@ const cloud = {
 };
 const AUFMASS_CACHE_KEY = 'stundenzettel_aufmassnr_v1';
 
+// ---- v38: Stunden zu Aufmaßnummern für die Aufmaßsoftware bereitstellen ----
+// Pro Aufmaßnummer ein Dokument users/{uid}/sz_aufmass_stunden/{nr} mit allen Einträgen,
+// bei denen diese Nummer ausgewählt ist. Die Aufmaßsoftware liest es beim Senden.
+const AUFMASS_PUB_KEY = 'stundenzettel_aufmass_pub_v1';
+let aufmassPubTimer = null;
+let aufmassPubRunning = false;
+
+function normAufmassNr(nr) { return String(nr || '').trim().toUpperCase(); }
+
+function collectAufmassStunden() {
+  const map = {};
+  [...state.entries, ...state.archive.flatMap(b => b.entries)].forEach(e => {
+    if (!e || isVacation(e) || e.aufmass !== 'ja') return;
+    const nr = normAufmassNr(e.aufmassNr);
+    if (!nr) return;
+    (map[nr] = map[nr] || []).push({
+      id: e.id || '',
+      datum: e.date,
+      stunden: Math.round(minutesToHoursDecimal(computeNetMinutes(e)) * 100) / 100,
+      zeit: entryTimeLabel(e),
+      taetigkeit: e.desc || '',
+      kunde: e.customer || ''
+    });
+  });
+  Object.values(map).forEach(l => l.sort((a, b) => a.datum.localeCompare(b.datum)));
+  return map;
+}
+
+function scheduleAufmassStundenSync() {
+  clearTimeout(aufmassPubTimer);
+  aufmassPubTimer = setTimeout(syncAufmassStunden, 1500);
+}
+
+async function syncAufmassStunden() {
+  if (!cloud.user || !cloud.db || aufmassPubRunning) return;
+  aufmassPubRunning = true;
+  try {
+    const uidNow = cloud.user.uid;
+    let pub = {};
+    try { pub = JSON.parse(localStorage.getItem(AUFMASS_PUB_KEY) || '{}'); } catch (e) { pub = {}; }
+    if (pub.uid !== uidNow) pub = { uid: uidNow, hashes: {} };
+    const map = collectAufmassStunden();
+    const mitarbeiter = (state.employeeName || '').trim();
+    const nrs = new Set([...Object.keys(map), ...Object.keys(pub.hashes)]);
+    const coll = cloud.db.collection('users').doc(uidNow).collection('sz_aufmass_stunden');
+    for (const nr of nrs) {
+      const eintraege = map[nr] || [];
+      const hash = JSON.stringify([mitarbeiter, eintraege]);
+      if (pub.hashes[nr] === hash) continue;
+      if (!eintraege.length && pub.hashes[nr] === undefined) continue;
+      await coll.doc(encodeURIComponent(nr)).set({ nr, mitarbeiter, eintraege, del: !eintraege.length, t: Date.now() });
+      if (eintraege.length) pub.hashes[nr] = hash; else delete pub.hashes[nr];
+      try { localStorage.setItem(AUFMASS_PUB_KEY, JSON.stringify(pub)); } catch (e) { /* ignore */ }
+    }
+  } catch (err) {
+    console.warn('Aufmaß-Stunden konnten nicht übertragen werden', err);
+  } finally {
+    aufmassPubRunning = false;
+  }
+}
+
 // Legt einen Kunden an bzw. ergänzt seine Adresse. Eine vorhandene Adresse wird nie durch
 // eine leere überschrieben. Gibt true zurück, wenn sich etwas geändert hat.
 function upsertCustomer(name, address) {
@@ -2472,7 +2534,7 @@ function refreshAufmassPicker(p, customerName) {
   if (!cloud.user && !list.length) hint.textContent = 'Nicht angemeldet – Nummer eintippen oder oben über das Wolken-Symbol anmelden, dann erscheint die Auswahl aus der Aufmaßsoftware.';
   else if (!cloud.user) hint.textContent = `Nicht angemeldet – ${list.length} Nummern vom letzten Abgleich.`;
   else if (cloud.aufmassError && !list.length) hint.textContent = 'Aufmaßnummern konnten nicht geladen werden (offline?) – Nummer bitte eintippen.';
-  else if (!list.length) hint.textContent = 'Keine Aufmaßnummern gefunden (in der Aufmaßsoftware muss zuerst ein PDF erstellt sein) – Nummer bitte eintippen.';
+  else if (!list.length) hint.textContent = 'Keine Aufmaßnummern gefunden (in der Aufmaßsoftware zuerst eine Nummer vergeben oder ein PDF erstellen) – Nummer bitte eintippen.';
   else hint.textContent = `${list.length} Nummern aus der Aufmaßsoftware${match.length ? ` · ${match.length} passend zum Kunden` : ''}.`;
 }
 
@@ -2560,7 +2622,7 @@ function cloudInit() {
   }
   initSyncUi();
   updateSyncUI();
-  window.addEventListener('online', () => { if (cloud.user) loadAufmassNummern(false); });
+  window.addEventListener('online', () => { if (cloud.user) { loadAufmassNummern(false); scheduleAufmassStundenSync(); } });
 }
 
 function onAuthChanged(user) {
@@ -2568,6 +2630,7 @@ function onAuthChanged(user) {
   if (user) {
     startCustomerSync();
     loadAufmassNummern(true);
+    scheduleAufmassStundenSync(); // v38
   } else {
     stopCustomerSync();
     cloud.aufmass = [];
