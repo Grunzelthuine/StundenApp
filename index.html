@@ -295,6 +295,8 @@
   .draft-banner svg.ic{width:18px; height:18px; flex:0 0 auto;}
   .draft-banner span{flex:1;}
   .draft-banner .link-btn{padding:0; color:var(--blue); text-decoration:underline; white-space:nowrap;}
+  .day-card.vacation.sick, .entry-item.vacation.sick{background:var(--violet-tint); border-color:#d9d0f5;}
+  .day-card.vacation.sick .dc-total{color:var(--violet);}
   .loc-btn{display:inline-flex; align-items:center; gap:6px; margin-top:8px; border:none; background:var(--blue-tint); color:var(--blue);
     border-radius:22px; padding:8px 14px; font-size:14px; font-weight:600; font-family:inherit; cursor:pointer;}
   .loc-btn svg.ic{width:17px; height:17px;}
@@ -329,6 +331,7 @@
   <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3a12 12 0 0 0 8.5 3a12 12 0 0 1-8.5 15a12 12 0 0 1-8.5-15a12 12 0 0 0 8.5-3"/></symbol>
   <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><circle cx="12" cy="16" r="1"/><path d="M8 11v-4a4 4 0 1 1 8 0v4"/></symbol>
   <symbol id="i-clock-plus" viewBox="0 0 24 24"><path d="M20.984 12.535a9 9 0 1 0-8.468 8.45"/><path d="M16 19h6"/><path d="M19 16v6"/><path d="M12 7v5l3 3"/></symbol>
+  <symbol id="i-thermo" viewBox="0 0 24 24"><path d="M10 13.5a4 4 0 1 0 4 0v-8.5a2 2 0 0 0-4 0v8.5"/><path d="M10 9h4"/></symbol>
   <symbol id="i-pencil-plus" viewBox="0 0 24 24"><path d="M4 20h4l10.5-10.5a2.828 2.828 0 1 0-4-4l-10.5 10.5v4"/><path d="M13.5 6.5l4 4"/><path d="M16 19h6"/><path d="M19 16v6"/></symbol>
 </svg>
 
@@ -450,8 +453,12 @@
 
   <div class="card">
     <details class="vac-card" id="vacationCard">
-      <summary><h2 style="margin:0;"><span class="ht ht-green"><svg class="ic" aria-hidden="true"><use href="#i-sun"/></svg></span>Urlaub eintragen</h2></summary>
-      <div class="hint" style="margin-top:8px;">Zeitraum wählen — pro Kalenderwoche entsteht ein Eintrag mit allen Werktagen (Mo–Fr) ohne Feiertage (Niedersachsen), je 8 Std. Am Monatswechsel wird die Woche geteilt, da jeder Monat ein eigenes Blatt hat. Im Urlaub gearbeitete Stunden einfach oben als normalen Eintrag erfassen.</div>
+      <summary><h2 style="margin:0;"><span class="ht ht-green"><svg class="ic" aria-hidden="true"><use href="#i-sun"/></svg></span>Urlaub / Krankheit</h2></summary>
+      <div class="segmented" id="v-kind" style="margin-top:12px;">
+        <button type="button" data-kind="urlaub" class="active">Urlaub</button>
+        <button type="button" data-kind="krank">Krankheit</button>
+      </div>
+      <div class="hint" style="margin-top:8px;">Zeitraum wählen — pro Kalenderwoche entsteht ein Eintrag mit allen Werktagen (Mo–Fr) ohne Feiertage (Niedersachsen), je 8 Std. Am Monatswechsel wird die Woche geteilt, da jeder Monat ein eigenes Blatt hat. Trotzdem gearbeitete Stunden einfach oben als normalen Eintrag erfassen.</div>
       <div class="row">
         <div><label for="v-from">Von</label><input type="date" id="v-from"></div>
         <div><label for="v-to">Bis</label><input type="date" id="v-to"></div>
@@ -505,7 +512,7 @@
   </div>
 
   <button type="button" class="btn btn-secondary settings-open" id="openSettingsBtn"><span class="ht ht-gray"><svg class="ic" aria-hidden="true"><use href="#i-settings"/></svg></span>Einstellungen &amp; Sicherung</button>
-  <div class="footer-note">Version 38</div>
+  <div class="footer-note">Version 39</div>
 </main>
 
 <main id="settingsView" style="display:none;">
@@ -555,7 +562,7 @@
     </details>
   </div>
 
-  <div class="footer-note">Einträge bleiben lokal auf diesem Gerät gespeichert. Kundenstamm und Aufmaßnummern werden nach der Anmeldung abgeglichen; Einträge mit Aufmaßnummer werden für die Aufmaßsoftware bereitgestellt.<br>Version 38</div>
+  <div class="footer-note">Einträge bleiben lokal auf diesem Gerät gespeichert. Kundenstamm und Aufmaßnummern werden nach der Anmeldung abgeglichen; Einträge mit Aufmaßnummer werden für die Aufmaßsoftware bereitgestellt.<br>Version 39</div>
 </main>
 
 <div class="toast" id="toast"></div>

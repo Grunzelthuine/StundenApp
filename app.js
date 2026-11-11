@@ -116,7 +116,15 @@ function uid() { return 'e' + Date.now().toString(36) + Math.random().toString(3
 
 const URLAUB_STUNDEN_PRO_TAG = 8;
 
-function isVacation(e) { return !!e && e.type === 'urlaub'; }
+// v39: „isVacation“ = ganztägige Abwesenheit (Urlaub ODER Krankheit) – gleiche Logik, gleiche Darstellung im PDF
+function isVacation(e) { return !!e && (e.type === 'urlaub' || e.type === 'krank'); }
+const ABWESENHEIT = {
+  urlaub: { kunde: 'Urlaub', text: 'Urlaub', tag: 'Urlaubstag', tage: 'Urlaubstage', icon: 'sun', farbe: 'var(--green)' },
+  krank: { kunde: 'Krank', text: 'Krankheit', tag: 'Krankheitstag', tage: 'Krankheitstage', icon: 'thermo', farbe: 'var(--violet)' }
+};
+function absenceKind(e) { return e && e.type === 'krank' ? 'krank' : 'urlaub'; }
+function absenceInfo(e) { return ABWESENHEIT[absenceKind(e)]; }
+function absenceIcon(e, size) { const a = absenceInfo(e); return `<svg class="ic" aria-hidden="true" style="width:${size || 16}px;height:${size || 16}px;color:${a.farbe};margin:-2px 6px 0 0"><use href="#i-${a.icon}"/></svg>`; }
 
 function easterSunday(year) {
   // Anonymer gregorianischer Algorithmus (Meeus/Jones/Butcher)
@@ -197,23 +205,24 @@ function computeVacationChunks(fromISO, toISO) {
   return { chunks, skippedHolidays };
 }
 
-function vacationDesc(start, end, n) {
+function vacationDesc(start, end, n, kind) {
   const range = start === end ? formatDateLong(start) : `${formatDateLong(start)} – ${formatDateLong(end)}`;
-  return `Urlaub ${range} (${n} ${n === 1 ? 'Tag' : 'Tage'} à ${URLAUB_STUNDEN_PRO_TAG} Std)`;
+  return `${ABWESENHEIT[kind || 'urlaub'].text} ${range} (${n} ${n === 1 ? 'Tag' : 'Tage'} à ${URLAUB_STUNDEN_PRO_TAG} Std)`;
 }
 
-function buildVacationEntry(chunk, blockId) {
+function buildVacationEntry(chunk, blockId, kind) {
   const n = chunk.days.length;
+  kind = kind === 'krank' ? 'krank' : 'urlaub';
   return {
     id: uid(),
-    type: 'urlaub',
+    type: kind,
     blockId,
     date: chunk.start,
     dateEnd: chunk.end,
     days: n,
-    customer: 'Urlaub',
+    customer: ABWESENHEIT[kind].kunde,
     address: '',
-    desc: vacationDesc(chunk.start, chunk.end, n),
+    desc: vacationDesc(chunk.start, chunk.end, n, kind),
     aufmass: 'keins',
     timeMode: 'duration',
     durationHours: n * URLAUB_STUNDEN_PRO_TAG,
@@ -244,7 +253,7 @@ function entryDateLabel(e, long = false) {
 }
 
 function entryTimeLabel(e) {
-  if (isVacation(e)) return `${e.days} ${e.days === 1 ? 'Urlaubstag' : 'Urlaubstage'} × ${URLAUB_STUNDEN_PRO_TAG} Std`;
+  if (isVacation(e)) { const a = absenceInfo(e); return `${e.days} ${e.days === 1 ? a.tag : a.tage} × ${URLAUB_STUNDEN_PRO_TAG} Std`; }
   const base = e.timeMode === 'range' ? `${e.start}–${e.end}` : `${formatHoursDE(e.durationHours)} Std`;
   return base + (Array.isArray(e.extraTimes) ? e.extraTimes.map(t => ' + ' + extraTimeLabel(t)).join('') : '');
 }
@@ -830,7 +839,15 @@ function initForm() {
 
 // ---------- Urlaub erfassen ----------
 
+let vacKind = 'urlaub'; // v39: Urlaub oder Krankheit
+function setVacKind(k) {
+  vacKind = k === 'krank' ? 'krank' : 'urlaub';
+  document.querySelectorAll('#v-kind button').forEach(b => b.classList.toggle('active', b.dataset.kind === vacKind));
+  $('saveVacationBtn').textContent = vacKind === 'krank' ? 'Krankheit eintragen' : 'Urlaub eintragen';
+  renderVacationPreview();
+}
 function initVacationForm() {
+  $('v-kind').addEventListener('click', (ev) => { const b = ev.target.closest('button[data-kind]'); if (b) setVacKind(b.dataset.kind); });
   $('v-from').addEventListener('change', () => {
     if (!$('v-to').value || $('v-to').value < $('v-from').value) $('v-to').value = $('v-from').value;
     renderVacationPreview();
@@ -843,7 +860,8 @@ function initVacationForm() {
 function renderVacationPreview() {
   const from = $('v-from').value, to = $('v-to').value;
   const box = $('vacationPreview');
-  if (!from || !to) { box.innerHTML = '<div class="hint">Zeitraum wählen (erster und letzter Urlaubstag).</div>'; return; }
+  const A = ABWESENHEIT[vacKind];
+  if (!from || !to) { box.innerHTML = `<div class="hint">Zeitraum wählen (erster und letzter ${A.tag}).</div>`; return; }
   if (to < from) { box.innerHTML = '<div class="hint" style="color:var(--red)">„Bis“ liegt vor „Von“.</div>'; return; }
   const { chunks, skippedHolidays } = computeVacationChunks(from, to);
   const totalDays = chunks.reduce((s, c) => s + c.days.length, 0);
@@ -853,13 +871,13 @@ function renderVacationPreview() {
     const range = c.start === c.end ? formatDateLong(c.start) : `${formatDateLong(c.start)} – ${formatDateLong(c.end)}`;
     html += `<div class="vac-row"><span>KW ${isoWeekNumber(c.start)}: ${range}</span><span>${c.days.length} T · ${c.days.length * URLAUB_STUNDEN_PRO_TAG} Std</span></div>`;
   });
-  html += `<div class="vac-row vac-total"><span>Gesamt: ${totalDays} ${totalDays === 1 ? 'Urlaubstag' : 'Urlaubstage'}</span><span>${totalDays * URLAUB_STUNDEN_PRO_TAG} Std</span></div>`;
+  html += `<div class="vac-row vac-total"><span>Gesamt: ${totalDays} ${totalDays === 1 ? A.tag : A.tage}</span><span>${totalDays * URLAUB_STUNDEN_PRO_TAG} Std</span></div>`;
   if (skippedHolidays.length) {
     html += `<div class="hint">Feiertage nicht mitgezählt: ${skippedHolidays.map(h => `${formatDateShort(h.date)} ${h.name}`).join(', ')}</div>`;
   }
   const overlap = overlappingVacationDays(chunks.flatMap(c => c.days));
   if (overlap.length) {
-    html += `<div class="hint" style="color:var(--red)">Achtung: Für ${overlap.length} dieser Tage ist bereits Urlaub eingetragen (${overlap.map(formatDateShort).join(', ')}).</div>`;
+    html += `<div class="hint" style="color:var(--red)">Achtung: Für ${overlap.length} dieser Tage ist bereits Urlaub oder Krankheit eingetragen (${overlap.map(formatDateShort).join(', ')}).</div>`;
   }
   html += '</div>';
   box.innerHTML = html;
@@ -872,13 +890,13 @@ function saveVacation() {
   const { chunks } = computeVacationChunks(from, to);
   if (!chunks.length) { showToast('Im Zeitraum liegen keine Werktage.'); return; }
   const overlap = overlappingVacationDays(chunks.flatMap(c => c.days));
-  if (overlap.length && !confirm(`Für ${overlap.length} Tag(e) ist bereits Urlaub eingetragen (${overlap.map(formatDateShort).join(', ')}). Trotzdem zusätzlich eintragen?`)) return;
+  if (overlap.length && !confirm(`Für ${overlap.length} Tag(e) ist bereits Urlaub oder Krankheit eingetragen (${overlap.map(formatDateShort).join(', ')}). Trotzdem zusätzlich eintragen?`)) return;
   const blockId = uid();
-  chunks.forEach(c => state.entries.push(buildVacationEntry(c, blockId)));
+  chunks.forEach(c => state.entries.push(buildVacationEntry(c, blockId, vacKind)));
   saveState();
   renderEntries();
   const totalDays = chunks.reduce((s, c) => s + c.days.length, 0);
-  showToast(`Urlaub eingetragen: ${totalDays} Tage in ${chunks.length} ${chunks.length === 1 ? 'Eintrag' : 'Einträgen'}.`);
+  showToast(`${ABWESENHEIT[vacKind].text} eingetragen: ${totalDays} ${totalDays === 1 ? 'Tag' : 'Tage'} in ${chunks.length} ${chunks.length === 1 ? 'Eintrag' : 'Einträgen'}.`);
   $('v-from').value = ''; $('v-to').value = '';
   renderVacationPreview();
 }
@@ -886,8 +904,12 @@ function saveVacation() {
 function openVacationEditModal(e) {
   const modal = $('editModal');
   modal.innerHTML = `
-    <h3>Urlaubseintrag bearbeiten</h3>
-    <div class="hint" style="margin-top:0;">Wochenenden und Feiertage werden automatisch ausgelassen. Der Eintrag muss innerhalb einer Woche und eines Monats bleiben — für längere Zeiträume bitte unter „Urlaub“ neu eintragen.</div>
+    <h3>Urlaub / Krankheit bearbeiten</h3>
+    <div class="segmented" id="mv-kind" style="margin-bottom:6px;">
+      <button type="button" data-kind="urlaub" class="${absenceKind(e) === 'urlaub' ? 'active' : ''}">Urlaub</button>
+      <button type="button" data-kind="krank" class="${absenceKind(e) === 'krank' ? 'active' : ''}">Krankheit</button>
+    </div>
+    <div class="hint" style="margin-top:6px;">Wochenenden und Feiertage werden automatisch ausgelassen. Der Eintrag muss innerhalb einer Woche und eines Monats bleiben — für längere Zeiträume bitte unter „Urlaub / Krankheit“ neu eintragen.</div>
     <div class="row">
       <div><label>Von</label><input type="date" id="mv-from" value="${e.date}"></div>
       <div><label>Bis</label><input type="date" id="mv-to" value="${e.dateEnd || e.date}"></div>
@@ -909,6 +931,12 @@ function openVacationEditModal(e) {
       : `→ ${res.chunks[0].days.length} ${res.chunks[0].days.length === 1 ? 'Tag' : 'Tage'} · ${res.chunks[0].days.length * URLAUB_STUNDEN_PRO_TAG} Std`;
     return err ? null : res.chunks[0];
   };
+  let mvKind = absenceKind(e);
+  modal.querySelector('#mv-kind').addEventListener('click', (ev) => {
+    const b = ev.target.closest('button[data-kind]'); if (!b) return;
+    mvKind = b.dataset.kind;
+    modal.querySelectorAll('#mv-kind button').forEach(x => x.classList.toggle('active', x === b));
+  });
   modal.querySelector('#mv-from').addEventListener('change', calc);
   modal.querySelector('#mv-to').addEventListener('change', calc);
   calc();
@@ -916,12 +944,12 @@ function openVacationEditModal(e) {
   modal.querySelector('#m-save').addEventListener('click', () => {
     const chunk = calc();
     if (!chunk) { showToast('Bitte Zeitraum korrigieren.'); return; }
-    const updated = buildVacationEntry(chunk, e.blockId);
+    const updated = buildVacationEntry(chunk, e.blockId, mvKind);
     Object.assign(e, updated, { id: e.id });
     saveState();
     renderEntries();
     closeEditModal();
-    showToast('Urlaubseintrag aktualisiert.');
+    showToast(`${ABWESENHEIT[mvKind].text} aktualisiert.`);
   });
   $('editModalBackdrop').classList.add('show');
 }
@@ -1059,13 +1087,13 @@ function renderEntries() {
     const total = dailyTotalHours(g.entries);
     const gKey = g.vacation ? 'u:' + g.entries[0].id : 'd:' + g.date;
     const det = document.createElement('details');
-    det.className = 'day-card' + (g.vacation ? ' vacation' : '');
+    det.className = 'day-card' + (g.vacation ? ' vacation' + (absenceKind(g.entries[0]) === 'krank' ? ' sick' : '') : '');
     if (openDayCards.has(gKey)) det.open = true;
     det.addEventListener('toggle', () => { det.open ? openDayCards.add(gKey) : openDayCards.delete(gKey); });
     const d0 = new Date(g.date + 'T00:00:00');
     const missingNr = g.entries.some(e => !isVacation(e) && e.aufmass === 'ja' && !String(e.aufmassNr || '').trim());
     const title = g.vacation
-      ? `<span class="dc-day"><svg class="ic" aria-hidden="true" style="width:16px;height:16px;color:var(--green);margin:-2px 6px 0 0"><use href="#i-sun"/></svg>Urlaub</span><span class="dc-date">${entryDateLabel(g.entries[0], true)}</span>`
+      ? `<span class="dc-day">${absenceIcon(g.entries[0])}${absenceInfo(g.entries[0]).text}</span><span class="dc-date">${entryDateLabel(g.entries[0], true)}</span>`
       : `<span class="dc-day">${WOCHENTAGE[d0.getDay()]}</span><span class="dc-date">${formatDateShort(g.date)}${g.date.slice(0, 4)}${g.entries.length > 1 ? ` · ${g.entries.length} Einträge` : ''}${missingNr ? ' · <span class="dc-warn">Aufmaß-Nr. fehlt</span>' : ''}</span>`;
     det.innerHTML = `<summary><span class="dc-title">${title}</span><span class="dc-total">${formatHoursDE(total)} Std</span></summary>`;
     const list = document.createElement('div');
@@ -1074,7 +1102,7 @@ function renderEntries() {
       const mins = computeNetMinutes(e);
       const timeLabel = entryTimeLabel(e);
       const item = document.createElement('div');
-      item.className = 'entry-item' + (isVacation(e) ? ' vacation' : '');
+      item.className = 'entry-item' + (isVacation(e) ? ' vacation' + (absenceKind(e) === 'krank' ? ' sick' : '') : '');
       item.innerHTML = `
         <div class="info">
           <div class="customer">${escapeHtml(e.customer)} ${siteBadge(e)}${aufmassBadge(e)}</div>
@@ -1628,7 +1656,7 @@ function renderArchiveMonthView() {
         const gDiv = document.createElement('div');
         gDiv.className = 'entry-group';
         const label = isVacation(first) ? entryDateLabel(first, true) : formatDateLong(first.date);
-        gDiv.innerHTML = `<div class="entry-group-date"><span>${isVacation(first) ? '<svg class="ic" style="width:16px;height:16px;color:var(--green);margin:-2px 6px 0 0" aria-hidden="true"><use href="#i-sun"/></svg>' : ''}${label}</span><span class="total">Gesamt: ${formatHoursDE(dayTotal)} Std</span></div>`;
+        gDiv.innerHTML = `<div class="entry-group-date"><span>${isVacation(first) ? absenceIcon(first) : ''}${label}</span><span class="total">Gesamt: ${formatHoursDE(dayTotal)} Std</span></div>`;
         const list = document.createElement('div');
         byDate[key].forEach(({ entry: e, batchId }) => {
           const mins = computeNetMinutes(e);
@@ -1846,7 +1874,7 @@ function backupStats(st) {
 }
 
 function statsText(x) {
-  return `${x.total} ${x.total === 1 ? 'Eintrag' : 'Einträge'} (${x.active} offen, ${x.archived} im Archiv in ${x.batches} ${x.batches === 1 ? 'Export' : 'Exporten'}), davon ${x.vacation} Urlaub · ${x.customers} Kunden`;
+  return `${x.total} ${x.total === 1 ? 'Eintrag' : 'Einträge'} (${x.active} offen, ${x.archived} im Archiv in ${x.batches} ${x.batches === 1 ? 'Export' : 'Exporten'}), davon ${x.vacation} Urlaub/Krank · ${x.customers} Kunden`;
 }
 
 function exportDataBackup() {
