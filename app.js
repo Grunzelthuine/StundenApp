@@ -120,7 +120,7 @@ const URLAUB_STUNDEN_PRO_TAG = 8;
 function isVacation(e) { return !!e && (e.type === 'urlaub' || e.type === 'krank'); }
 const ABWESENHEIT = {
   urlaub: { kunde: 'Urlaub', text: 'Urlaub', tag: 'Urlaubstag', tage: 'Urlaubstage', icon: 'sun', farbe: 'var(--green)' },
-  krank: { kunde: 'Krank', text: 'Krankheit', tag: 'Krankheitstag', tage: 'Krankheitstage', icon: 'thermo', farbe: 'var(--violet)' }
+  krank: { kunde: 'Krank', text: 'Krank', tag: 'Krankheitstag', tage: 'Krankheitstage', icon: 'thermo', farbe: 'var(--violet)' }
 };
 function absenceKind(e) { return e && e.type === 'krank' ? 'krank' : 'urlaub'; }
 function absenceInfo(e) { return ABWESENHEIT[absenceKind(e)]; }
@@ -840,10 +840,18 @@ function initForm() {
 // ---------- Urlaub erfassen ----------
 
 let vacKind = 'urlaub'; // v39: Urlaub oder Krankheit
+// v40: frühere Krankheits-Einträge („Krankheit Mo …“) auf „Krank Mo …“ umschreiben
+setTimeout(function migrateKrankDesc() { // erst nach dem Laden aller Skriptteile ausführen
+  let n = 0;
+  [...state.entries, ...state.archive.flatMap(b => b.entries)].forEach(e => {
+    if (e && e.type === 'krank' && /^Krankheit /.test(e.desc || '')) { e.desc = e.desc.replace(/^Krankheit /, 'Krank '); n++; }
+  });
+  if (n) { saveState(); renderEntries(); try { renderArchive(); } catch (e) { /* ignore */ } }
+}, 0);
 function setVacKind(k) {
   vacKind = k === 'krank' ? 'krank' : 'urlaub';
   document.querySelectorAll('#v-kind button').forEach(b => b.classList.toggle('active', b.dataset.kind === vacKind));
-  $('saveVacationBtn').textContent = vacKind === 'krank' ? 'Krankheit eintragen' : 'Urlaub eintragen';
+  $('saveVacationBtn').textContent = vacKind === 'krank' ? 'Krank eintragen' : 'Urlaub eintragen';
   renderVacationPreview();
 }
 function initVacationForm() {
@@ -877,7 +885,7 @@ function renderVacationPreview() {
   }
   const overlap = overlappingVacationDays(chunks.flatMap(c => c.days));
   if (overlap.length) {
-    html += `<div class="hint" style="color:var(--red)">Achtung: Für ${overlap.length} dieser Tage ist bereits Urlaub oder Krankheit eingetragen (${overlap.map(formatDateShort).join(', ')}).</div>`;
+    html += `<div class="hint" style="color:var(--red)">Achtung: Für ${overlap.length} dieser Tage ist bereits Urlaub oder Krank eingetragen (${overlap.map(formatDateShort).join(', ')}).</div>`;
   }
   html += '</div>';
   box.innerHTML = html;
@@ -890,7 +898,7 @@ function saveVacation() {
   const { chunks } = computeVacationChunks(from, to);
   if (!chunks.length) { showToast('Im Zeitraum liegen keine Werktage.'); return; }
   const overlap = overlappingVacationDays(chunks.flatMap(c => c.days));
-  if (overlap.length && !confirm(`Für ${overlap.length} Tag(e) ist bereits Urlaub oder Krankheit eingetragen (${overlap.map(formatDateShort).join(', ')}). Trotzdem zusätzlich eintragen?`)) return;
+  if (overlap.length && !confirm(`Für ${overlap.length} Tag(e) ist bereits Urlaub oder Krank eingetragen (${overlap.map(formatDateShort).join(', ')}). Trotzdem zusätzlich eintragen?`)) return;
   const blockId = uid();
   chunks.forEach(c => state.entries.push(buildVacationEntry(c, blockId, vacKind)));
   saveState();
@@ -904,12 +912,12 @@ function saveVacation() {
 function openVacationEditModal(e) {
   const modal = $('editModal');
   modal.innerHTML = `
-    <h3>Urlaub / Krankheit bearbeiten</h3>
+    <h3>Urlaub / Krank bearbeiten</h3>
     <div class="segmented" id="mv-kind" style="margin-bottom:6px;">
       <button type="button" data-kind="urlaub" class="${absenceKind(e) === 'urlaub' ? 'active' : ''}">Urlaub</button>
-      <button type="button" data-kind="krank" class="${absenceKind(e) === 'krank' ? 'active' : ''}">Krankheit</button>
+      <button type="button" data-kind="krank" class="${absenceKind(e) === 'krank' ? 'active' : ''}">Krank</button>
     </div>
-    <div class="hint" style="margin-top:6px;">Wochenenden und Feiertage werden automatisch ausgelassen. Der Eintrag muss innerhalb einer Woche und eines Monats bleiben — für längere Zeiträume bitte unter „Urlaub / Krankheit“ neu eintragen.</div>
+    <div class="hint" style="margin-top:6px;">Wochenenden und Feiertage werden automatisch ausgelassen. Der Eintrag muss innerhalb einer Woche und eines Monats bleiben — für längere Zeiträume bitte unter „Urlaub / Krank“ neu eintragen.</div>
     <div class="row">
       <div><label>Von</label><input type="date" id="mv-from" value="${e.date}"></div>
       <div><label>Bis</label><input type="date" id="mv-to" value="${e.dateEnd || e.date}"></div>
